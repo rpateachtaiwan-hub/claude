@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>路特旅行社 - 訂單管理系統</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">✈</div>
+        <div class="brand-text">
+          <h2>路特旅行社</h2>
+          <span>訂單管理系統</span>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">📊</span>
+          <span>總覽</span>
+        </a>
+        <a href="#" class="nav-item" data-page="bookings">
+          <span class="nav-icon">📋</span>
+          <span>訂單列表</span>
+        </a>
+        <a href="#" class="nav-item" data-page="import">
+          <span class="nav-icon">📥</span>
+          <span>匯入訂單</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>Klook 訂單管理</span>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content">
+
+      <!-- Dashboard Page -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-header">
+          <div>
+            <h1>總覽</h1>
+            <p class="page-subtitle" id="today-date"></p>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card blue">
+            <div class="stat-icon">📋</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-total">0</div>
+              <div class="stat-label">總訂單數</div>
+            </div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-icon">🗓</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-upcoming">0</div>
+              <div class="stat-label">即將出發</div>
+            </div>
+          </div>
+          <div class="stat-card orange">
+            <div class="stat-icon">👥</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-participants">0</div>
+              <div class="stat-label">總旅客人數</div>
+            </div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-icon">🌍</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-countries">0</div>
+              <div class="stat-label">旅客國籍數</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-header">
+            <h2>即將出發訂單</h2>
+            <button class="btn btn-sm btn-primary" onclick="navigateTo('bookings')">查看全部</button>
+          </div>
+          <div id="upcoming-list" class="booking-list"></div>
+        </div>
+      </div>
+
+      <!-- Bookings Page -->
+      <div class="page" id="page-bookings">
+        <div class="page-header">
+          <div>
+            <h1>訂單列表</h1>
+            <p class="page-subtitle">所有 Klook 確認訂單</p>
+          </div>
+          <div class="header-actions">
+            <input type="text" id="search-input" class="search-input" placeholder="🔍 搜尋訂單號、旅客姓名、護照號...">
+          </div>
+        </div>
+        <div class="section-card">
+          <div id="bookings-list" class="booking-list"></div>
+        </div>
+      </div>
+
+      <!-- Import Page -->
+      <div class="page" id="page-import">
+        <div class="page-header">
+          <div>
+            <h1>匯入訂單</h1>
+            <p class="page-subtitle">從 Klook 確認信自動解析訂單資料</p>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="import-instructions">
+            <div class="instruction-icon">📧</div>
+            <div>
+              <strong>使用方式</strong>
+              <p>將 Klook 寄來的訂單確認信完整內容複製後貼到下方，系統將自動解析所有旅客資料並新增訂單。</p>
+            </div>
+          </div>
+          <div class="import-body">
+            <label class="textarea-label">Klook 訂單確認信內容</label>
+            <textarea id="email-input" class="email-textarea" placeholder="貼上 Klook 訂單確認信內容...
+
+例如：
+Klook has confirmed an order for ...
+Booking reference ID: AWB862233
+..."></textarea>
+            <div class="import-actions">
+              <button class="btn btn-secondary" id="btn-clear">清除</button>
+              <button class="btn btn-primary" id="btn-parse">
+                <span>🔍 解析並匯入</span>
+              </button>
+            </div>
+            <div id="parse-result" class="parse-result hidden"></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Booking Detail Modal -->
+  <div class="modal-overlay hidden" id="modal-overlay">
+    <div class="modal" id="booking-modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="modal-title">訂單詳情</h2>
+          <p id="modal-subtitle" class="modal-subtitle"></p>
+        </div>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="btn-delete">🗑 刪除訂單</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-secondary" id="btn-export-csv">📄 匯出 CSV</button>
+        <button class="btn btn-primary" id="btn-print">🖨 列印名單</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
