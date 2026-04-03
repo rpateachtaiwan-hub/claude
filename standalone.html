@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>路特旅行社 - 訂單管理系統</title>
+  <style>
+/* ===== CSS Variables ===== */
+:root {
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-light: #eff6ff;
+  --green: #10b981;
+  --green-light: #d1fae5;
+  --orange: #f59e0b;
+  --orange-light: #fef3c7;
+  --purple: #8b5cf6;
+  --purple-light: #ede9fe;
+  --danger: #ef4444;
+  --danger-light: #fee2e2;
+  --bg: #f1f5f9;
+  --card-bg: #ffffff;
+  --sidebar-bg: #0f172a;
+  --sidebar-hover: rgba(255,255,255,0.07);
+  --sidebar-active: #2563eb;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg: 0 20px 40px rgba(0,0,0,0.15);
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+/* ===== Reset ===== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+/* ===== Layout ===== */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ===== Sidebar ===== */
+.sidebar {
+  width: 240px;
+  background: var(--sidebar-bg);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0;
+  height: 100vh;
+  z-index: 100;
+  overflow: hidden;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.brand-icon {
+  font-size: 22px;
+  background: var(--primary);
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.brand-text h2 {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.brand-text span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.sidebar-nav {
+  padding: 12px 10px;
+  flex: 1;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  color: #94a3b8;
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 2px;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.nav-item:hover { background: var(--sidebar-hover); color: #e2e8f0; }
+.nav-item.active { background: var(--primary); color: #fff; }
+.nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+
+.sidebar-footer {
+  padding: 14px 16px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  color: #475569;
+  font-size: 11px;
+}
+
+/* ===== Main Content ===== */
+.main-content {
+  flex: 1;
+  margin-left: 240px;
+  padding: 28px;
+  min-height: 100vh;
+}
+
+/* ===== Pages ===== */
+.page { display: none; animation: fadeIn 0.2s ease; }
+.page.active { display: block; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Page Header ===== */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.page-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* ===== Stats Grid ===== */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  transition: box-shadow 0.2s;
+}
+
+.stat-card:hover { box-shadow: var(--shadow-md); }
+
+.stat-icon {
+  font-size: 26px;
+  width: 50px; height: 50px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-card.blue .stat-icon { background: var(--primary-light); }
+.stat-card.green .stat-icon { background: var(--green-light); }
+.stat-card.orange .stat-icon { background: var(--orange-light); }
+.stat-card.purple .stat-icon { background: var(--purple-light); }
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  font-weight: 500;
+}
+
+/* ===== Section Card ===== */
+.section-card {
+  background: var(--card-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ===== Booking List ===== */
+.booking-list { }
+
+.booking-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 20px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.booking-item:last-child { border-bottom: none; }
+.booking-item:hover { background: #f8fafc; }
+
+.booking-ref {
+  font-weight: 700;
+  color: var(--primary);
+  font-size: 12.5px;
+  font-family: 'Courier New', monospace;
+  min-width: 110px;
+  background: var(--primary-light);
+  padding: 3px 8px;
+  border-radius: 5px;
+}
+
+.booking-info { flex: 1; min-width: 0; }
+
+.booking-tour {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.booking-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.booking-right { text-align: right; flex-shrink: 0; }
+
+.booking-date {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.booking-count {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ===== Status Badge ===== */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.status-upcoming { background: #dbeafe; color: #1d4ed8; }
+.status-today { background: #d1fae5; color: #065f46; }
+.status-past { background: #f1f5f9; color: #64748b; }
+
+/* ===== Search ===== */
+.search-input {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  width: 300px;
+  outline: none;
+  background: var(--card-bg);
+  transition: all 0.15s;
+  color: var(--text);
+}
+
+.search-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+/* ===== Buttons ===== */
+.btn {
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-dark); }
+
+.btn-secondary {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: #e2e8f0; }
+
+.btn-danger { background: var(--danger-light); color: #b91c1c; }
+.btn-danger:hover { background: #fecaca; }
+
+.btn-sm { padding: 5px 12px; font-size: 12px; }
+
+.header-actions { display: flex; gap: 10px; align-items: center; }
+
+/* ===== Import Page ===== */
+.import-instructions {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 20px;
+  background: #f0f9ff;
+  border-bottom: 1px solid #bae6fd;
+}
+
+.instruction-icon { font-size: 24px; line-height: 1; }
+
+.import-instructions strong {
+  display: block;
+  font-size: 13.5px;
+  margin-bottom: 3px;
+  color: #0369a1;
+}
+
+.import-instructions p {
+  font-size: 13px;
+  color: #0369a1;
+  line-height: 1.5;
+}
+
+.import-body { padding: 20px; }
+
+.textarea-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.email-textarea {
+  width: 100%;
+  height: 280px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  font-family: 'Courier New', monospace;
+  resize: vertical;
+  outline: none;
+  color: var(--text);
+  background: #fafafa;
+  transition: border-color 0.15s;
+  line-height: 1.6;
+}
+
+.email-textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+  background: #fff;
+}
+
+.import-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.parse-result {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.parse-result.success { background: var(--green-light); color: #065f46; border: 1px solid #6ee7b7; }
+.parse-result.error { background: var(--danger-light); color: #991b1b; border: 1px solid #fca5a5; }
+.parse-result.hidden { display: none; }
+
+/* ===== Modal ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  backdrop-filter: blur(2px);
+}
+
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: #fff;
+  border-radius: var(--radius-xl);
+  width: 100%;
+  max-width: 860px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+  animation: modalIn 0.2s ease;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.modal-header h2 { font-size: 17px; font-weight: 700; }
+.modal-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+.modal-close {
+  background: #f1f5f9;
+  border: none;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.modal-close:hover { background: #e2e8f0; color: var(--text); }
+
+.modal-body {
+  padding: 22px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ===== Detail Grid ===== */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.detail-section {
+  background: #f8fafc;
+  border-radius: var(--radius);
+  padding: 15px;
+  border: 1px solid var(--border);
+}
+
+.detail-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 700;
+  margin-bottom: 11px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-item {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 7px;
+  font-size: 13px;
+}
+
+.detail-label {
+  color: var(--text-muted);
+  min-width: 90px;
+  flex-shrink: 0;
+  font-size: 12.5px;
+}
+
+.detail-value {
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-all;
+}
+
+/* ===== Participants Table ===== */
+.participants-section { }
+
+.participants-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.participants-header h3 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.table-wrapper {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.participants-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.participants-table th {
+  background: #f1f5f9;
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.participants-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+
+.participants-table tbody tr:last-child td { border-bottom: none; }
+.participants-table tbody tr:hover td { background: #f8fafc; }
+
+.name-cell strong {
+  display: block;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.passport-num {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  letter-spacing: 0.05em;
+}
+
+/* ===== Age Badges ===== */
+.age-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.age-adult { background: #dbeafe; color: #1d4ed8; }
+.age-child { background: #fef3c7; color: #92400e; }
+.age-infant { background: #fce7f3; color: #9d174d; }
+
+/* ===== Empty State ===== */
+.empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+}
+
+.empty-icon { font-size: 36px; margin-bottom: 10px; }
+.empty-state p { font-size: 14px; }
+
+/* ===== Toast ===== */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #1e293b;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-size: 13.5px;
+  z-index: 2000;
+  box-shadow: var(--shadow-md);
+  animation: slideUp 0.25s ease;
+}
+
+.toast.hidden { display: none; }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== Links ===== */
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ===== Print Styles ===== */
+@media print {
+  .sidebar, .modal-footer, .modal-close, .modal-header .modal-close { display: none !important; }
+  .modal-overlay { position: static !important; background: none !important; padding: 0 !important; }
+  .modal { box-shadow: none !important; max-height: none !important; }
+  .modal-body { overflow: visible !important; }
+  body { background: white; }
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 1100px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .sidebar { width: 56px; }
+  .brand-text, .nav-item span:last-child, .sidebar-footer { display: none; }
+  .main-content { margin-left: 56px; padding: 16px; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .booking-meta { display: none; }
+  .search-input { width: 100%; }
+}
+
+</style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">✈</div>
+        <div class="brand-text">
+          <h2>路特旅行社</h2>
+          <span>訂單管理系統</span>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">📊</span>
+          <span>總覽</span>
+        </a>
+        <a href="#" class="nav-item" data-page="bookings">
+          <span class="nav-icon">📋</span>
+          <span>訂單列表</span>
+        </a>
+        <a href="#" class="nav-item" data-page="import">
+          <span class="nav-icon">📥</span>
+          <span>匯入訂單</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>Klook 訂單管理</span>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content">
+
+      <!-- Dashboard Page -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-header">
+          <div>
+            <h1>總覽</h1>
+            <p class="page-subtitle" id="today-date"></p>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card blue">
+            <div class="stat-icon">📋</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-total">0</div>
+              <div class="stat-label">總訂單數</div>
+            </div>
+          </div>
+          <div class="stat-card green">
+            <div class="stat-icon">🗓</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-upcoming">0</div>
+              <div class="stat-label">即將出發</div>
+            </div>
+          </div>
+          <div class="stat-card orange">
+            <div class="stat-icon">👥</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-participants">0</div>
+              <div class="stat-label">總旅客人數</div>
+            </div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-icon">🌍</div>
+            <div class="stat-info">
+              <div class="stat-value" id="stat-countries">0</div>
+              <div class="stat-label">旅客國籍數</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <div class="section-header">
+            <h2>即將出發訂單</h2>
+            <button class="btn btn-sm btn-primary" onclick="navigateTo('bookings')">查看全部</button>
+          </div>
+          <div id="upcoming-list" class="booking-list"></div>
+        </div>
+      </div>
+
+      <!-- Bookings Page -->
+      <div class="page" id="page-bookings">
+        <div class="page-header">
+          <div>
+            <h1>訂單列表</h1>
+            <p class="page-subtitle">所有 Klook 確認訂單</p>
+          </div>
+          <div class="header-actions">
+            <input type="text" id="search-input" class="search-input" placeholder="🔍 搜尋訂單號、旅客姓名、護照號...">
+          </div>
+        </div>
+        <div class="section-card">
+          <div id="bookings-list" class="booking-list"></div>
+        </div>
+      </div>
+
+      <!-- Import Page -->
+      <div class="page" id="page-import">
+        <div class="page-header">
+          <div>
+            <h1>匯入訂單</h1>
+            <p class="page-subtitle">從 Klook 確認信自動解析訂單資料</p>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="import-instructions">
+            <div class="instruction-icon">📧</div>
+            <div>
+              <strong>使用方式</strong>
+              <p>將 Klook 寄來的訂單確認信完整內容複製後貼到下方，系統將自動解析所有旅客資料並新增訂單。</p>
+            </div>
+          </div>
+          <div class="import-body">
+            <label class="textarea-label">Klook 訂單確認信內容</label>
+            <textarea id="email-input" class="email-textarea" placeholder="貼上 Klook 訂單確認信內容...
+
+例如：
+Klook has confirmed an order for ...
+Booking reference ID: AWB862233
+..."></textarea>
+            <div class="import-actions">
+              <button class="btn btn-secondary" id="btn-clear">清除</button>
+              <button class="btn btn-primary" id="btn-parse">
+                <span>🔍 解析並匯入</span>
+              </button>
+            </div>
+            <div id="parse-result" class="parse-result hidden"></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Booking Detail Modal -->
+  <div class="modal-overlay hidden" id="modal-overlay">
+    <div class="modal" id="booking-modal">
+      <div class="modal-header">
+        <div>
+          <h2 id="modal-title">訂單詳情</h2>
+          <p id="modal-subtitle" class="modal-subtitle"></p>
+        </div>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="btn-delete">🗑 刪除訂單</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-secondary" id="btn-export-csv">📄 匯出 CSV</button>
+        <button class="btn btn-primary" id="btn-print">🖨 列印名單</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div class="toast hidden" id="toast"></div>
+
+  <script>
+/* ============================================================
+   路特旅行社 訂單管理系統 — app.js
+   解析 Klook 訂單確認信，管理旅客名單
+   ============================================================ */
+
+// ── 預載範例訂單 ────────────────────────────────────────────
+const SAMPLE_BOOKING = {
+  id: 1000000000001,
+  bookingRef: 'AWB862233',
+  tourName: 'Yehliu & Jiufen & Shifen Day Tour (Optional Tiaoshi Coast)',
+  package: 'Yehliu & Jiufen & Golden Waterfall & Shifen & Shifen Waterfall Group Tour',
+  dateRequest: '2026-03-23',
+  timeRequest: 'NA',
+  leadTitle: 'MRS',
+  leadName: 'cecile mejares',
+  country: 'Philippines',
+  leadEmail: 'cecilemejares@yahoo.com',
+  leadMobile: '63-9228220719',
+  adultCount: 10,
+  childCount: 1,
+  activityUrl: 'https://www.klook.com/en-US/activity/93318',
+  language: 'English',
+  departureLocation: 'MRT Ximen Station Exit 5',
+  participants: [
+    { num: 1,  firstName: 'cecile',       lastName: 'mejares', dob: '1979-07-19', passport: 'P3441569B' },
+    { num: 2,  firstName: 'michael',      lastName: 'catolos', dob: '1981-02-03', passport: 'P7063070A' },
+    { num: 3,  firstName: 'liza',         lastName: 'catolos', dob: '1979-10-08', passport: 'P7070933A' },
+    { num: 4,  firstName: 'mikko gabriel',lastName: 'catolos', dob: '2019-03-08', passport: 'P6214894C' },
+    { num: 5,  firstName: 'darren',       lastName: 'torres',  dob: '1984-01-06', passport: 'P2115633C' },
+    { num: 6,  firstName: 'sherry lyn',   lastName: 'torres',  dob: '1983-07-24', passport: 'P2112666C' },
+    { num: 7,  firstName: 'darlene shane',lastName: 'torres',  dob: '2011-10-23', passport: 'P2112318C' },
+    { num: 8,  firstName: 'faith sherlyn',lastName: 'torres',  dob: '2013-01-22', passport: 'P2112657C' },
+    { num: 9,  firstName: 'rowel',        lastName: 'mejares', dob: '1978-02-10', passport: 'P6130879C' },
+    { num: 10, firstName: 'lance angelo', lastName: 'mejares', dob: '2003-09-10', passport: 'P6130878C' },
+    { num: 11, firstName: 'ellise hope',  lastName: 'torres',  dob: '2023-07-01', passport: 'P5706538C' }
+  ]
+};
+
+// ── LocalStorage 管理 ───────────────────────────────────────
+const Storage = {
+  KEY: 'lute_travel_bookings_v1',
+
+  getAll() {
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  },
+
+  save(bookings) {
+    localStorage.setItem(this.KEY, JSON.stringify(bookings));
+  },
+
+  add(booking) {
+    const list = this.getAll();
+    if (list.find(b => b.bookingRef === booking.bookingRef)) return false;
+    booking.id = Date.now();
+    list.push(booking);
+    this.save(list);
+    return true;
+  },
+
+  remove(id) {
+    this.save(this.getAll().filter(b => b.id !== id));
+  }
+};
+
+// ── Klook Email Parser ──────────────────────────────────────
+function parseKlookEmail(rawText) {
+  // Remove surrounding quotes from CSV-style quoted lines
+  const text = rawText
+    .replace(/^"(.*)"$/gm, '$1')
+    .replace(/^"/gm, '')
+    .replace(/"$/gm, '');
+
+  const lines = text.split('\n');
+
+  const extract = (pattern) => {
+    const m = text.match(pattern);
+    return m ? m[1].trim() : '';
+  };
+
+  // ── Required: booking reference ─────────────────────────
+  const bookingRef = extract(/Booking reference ID:\s*(\S+)/);
+  if (!bookingRef) return null;
+
+  // ── Tour name: standalone line just before "Package:" ───
+  let tourName = '';
+  const pkgLineIdx = lines.findIndex(l => /^Package:\s+/i.test(l.trim()));
+  if (pkgLineIdx > 0) {
+    for (let i = pkgLineIdx - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (
+        line.length > 0 &&
+        !line.startsWith('Klook has confirmed') &&
+        !line.startsWith('Hey there') &&
+        !line.startsWith('Cheers') &&
+        !line.includes('@')
+      ) {
+        tourName = line;
+        break;
+      }
+    }
+  }
+  // Fallback: from "confirmed an order for X - Y and issued"
+  if (!tourName) {
+    const m = text.match(/confirmed an order for (.+?) - .+? and issued/);
+    if (m) tourName = m[1].trim();
+  }
+
+  const pkg        = extract(/Package:\s+(.+)/);
+  const dateReq    = extract(/Date Request:\s*(\S+)/);
+  const timeReq    = extract(/Time Request:\s*(\S+)/);
+  const country    = extract(/Country\/region of passport:\s*(.+)/);
+  const leadEmail  = extract(/Lead person email:\s*(\S+)/);
+  const leadMobile = extract(/Lead person mobile:\s*(\S+)/);
+  const language   = extract(/Preferred language:\s*(.+)/);
+  const departure  = extract(/Departure location:\s*(.+)/);
+  const actUrl     = extract(/Activity URL:\s*(\S+)/);
+
+  // Lead participant "(MRS)cecile mejares"
+  let leadTitle = '', leadName = '';
+  const leadM = text.match(/Lead participant:\s*\(([^)]+)\)\s*(.+)/);
+  if (leadM) { leadTitle = leadM[1].trim(); leadName = leadM[2].trim(); }
+
+  // Participant count
+  const countM = text.match(/Participant:\s*(\d+)\s*x\s*Adult(?:[^,\n]*,\s*(\d+)\s*x\s*Child)?/i);
+  const adultCount = countM ? parseInt(countM[1]) : 0;
+  const childCount = (countM && countM[2]) ? parseInt(countM[2]) : 0;
+
+  // ── Individual participants ──────────────────────────────
+  const pMap = {};
+
+  for (const line of lines) {
+    let m;
+
+    m = line.match(/Participant(\d+)\s+First name:\s*(.+)/i);
+    if (m) { const n = +m[1]; (pMap[n] = pMap[n] || { num: n }).firstName = m[2].trim(); }
+
+    m = line.match(/Participant(\d+)\s+Last name:\s*(.+)/i);
+    if (m) { const n = +m[1]; (pMap[n] = pMap[n] || { num: n }).lastName = m[2].trim(); }
+
+    m = line.match(/Participant(\d+)\s+Date of birth:\s*(.+)/i);
+    if (m) { const n = +m[1]; (pMap[n] = pMap[n] || { num: n }).dob = m[2].trim(); }
+
+    m = line.match(/Participant(\d+)\s+ID number\s*\(Passport\):\s*(.+)/i);
+    if (m) { const n = +m[1]; (pMap[n] = pMap[n] || { num: n }).passport = m[2].trim(); }
+  }
+
+  const participants = Object.keys(pMap)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map(n => pMap[n]);
+
+  return {
+    bookingRef, tourName, package: pkg,
+    dateRequest: dateReq, timeRequest: timeReq,
+    leadTitle, leadName, country, leadEmail, leadMobile,
+    adultCount, childCount, activityUrl: actUrl,
+    language, departureLocation: departure,
+    participants
+  };
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+function calcAge(dob, tourDate) {
+  if (!dob || !tourDate || tourDate === 'NA') return null;
+  const d = new Date(dob), t = new Date(tourDate + 'T00:00:00');
+  let age = t.getFullYear() - d.getFullYear();
+  const mDiff = t.getMonth() - d.getMonth();
+  if (mDiff < 0 || (mDiff === 0 && t.getDate() < d.getDate())) age--;
+  return age;
+}
+
+function fmtDate(ds) {
+  if (!ds || ds === 'NA') return '未指定';
+  const d = new Date(ds + 'T00:00:00');
+  return d.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function getStatus(ds) {
+  if (!ds || ds === 'NA') return { label: '待確認', cls: 'status-past' };
+  const today = new Date(); today.setHours(0,0,0,0);
+  const td = new Date(ds + 'T00:00:00');
+  if (+td === +today) return { label: '今日出發 🎉', cls: 'status-today' };
+  if (td > today) return { label: '即將出發', cls: 'status-upcoming' };
+  return { label: '已完成', cls: 'status-past' };
+}
+
+function cap(s) {
+  if (!s) return '';
+  return s.split(' ').map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : '').join(' ');
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+}
+
+// ── App State ────────────────────────────────────────────────
+let searchQuery = '';
+let currentBooking = null;
+
+// ── Init ─────────────────────────────────────────────────────
+function init() {
+  if (Storage.getAll().length === 0) Storage.add({ ...SAMPLE_BOOKING });
+
+  document.getElementById('today-date').textContent =
+    new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+
+  // Nav
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', e => {
+      e.preventDefault();
+      navigateTo(item.dataset.page);
+    });
+  });
+
+  // Search
+  document.getElementById('search-input').addEventListener('input', e => {
+    searchQuery = e.target.value.toLowerCase();
+    renderBookingsList();
+  });
+
+  // Import
+  document.getElementById('btn-parse').addEventListener('click', handleImport);
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    document.getElementById('email-input').value = '';
+    document.getElementById('parse-result').className = 'parse-result hidden';
+  });
+
+  // Modal
+  document.getElementById('modal-close').addEventListener('click', closeModal);
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target.id === 'modal-overlay') closeModal();
+  });
+  document.getElementById('btn-export-csv').addEventListener('click', exportCSV);
+  document.getElementById('btn-print').addEventListener('click', () => window.print());
+  document.getElementById('btn-delete').addEventListener('click', deleteCurrentBooking);
+
+  renderDashboard();
+  renderBookingsList();
+}
+
+// ── Navigation ───────────────────────────────────────────────
+function navigateTo(page) {
+  document.querySelectorAll('.nav-item').forEach(i =>
+    i.classList.toggle('active', i.dataset.page === page)
+  );
+  document.querySelectorAll('.page').forEach(p =>
+    p.classList.toggle('active', p.id === `page-${page}`)
+  );
+}
+
+// ── Dashboard ────────────────────────────────────────────────
+function renderDashboard() {
+  const all = Storage.getAll();
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  const upcoming = all.filter(b => b.dateRequest && b.dateRequest !== 'NA' &&
+    new Date(b.dateRequest + 'T00:00:00') >= today);
+  const totalPax = all.reduce((s, b) => s + (b.participants ? b.participants.length : 0), 0);
+  const countries = new Set(all.map(b => b.country).filter(Boolean));
+
+  document.getElementById('stat-total').textContent = all.length;
+  document.getElementById('stat-upcoming').textContent = upcoming.length;
+  document.getElementById('stat-participants').textContent = totalPax;
+  document.getElementById('stat-countries').textContent = countries.size;
+
+  const sorted = [...upcoming].sort((a,b) => new Date(a.dateRequest) - new Date(b.dateRequest)).slice(0, 8);
+  const el = document.getElementById('upcoming-list');
+  if (sorted.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎒</div><p>目前沒有即將出發的訂單</p></div>`;
+  } else {
+    el.innerHTML = sorted.map(bookingItemHTML).join('');
+    bindBookingItemClicks(el);
+  }
+}
+
+// ── Booking List ─────────────────────────────────────────────
+function renderBookingsList() {
+  const all = Storage.getAll();
+  const q = searchQuery;
+
+  const filtered = all.filter(b => {
+    if (!q) return true;
+    return (
+      b.bookingRef?.toLowerCase().includes(q) ||
+      b.leadName?.toLowerCase().includes(q) ||
+      b.tourName?.toLowerCase().includes(q) ||
+      b.country?.toLowerCase().includes(q) ||
+      b.participants?.some(p =>
+        `${p.firstName} ${p.lastName}`.toLowerCase().includes(q) ||
+        p.passport?.toLowerCase().includes(q)
+      )
+    );
+  }).sort((a, b) => {
+    if (!a.dateRequest || a.dateRequest === 'NA') return 1;
+    if (!b.dateRequest || b.dateRequest === 'NA') return -1;
+    return new Date(b.dateRequest) - new Date(a.dateRequest);
+  });
+
+  const el = document.getElementById('bookings-list');
+  if (filtered.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🔍</div><p>找不到符合的訂單</p></div>`;
+  } else {
+    el.innerHTML = filtered.map(bookingItemHTML).join('');
+    bindBookingItemClicks(el);
+  }
+}
+
+function bookingItemHTML(b) {
+  const status = getStatus(b.dateRequest);
+  const total = (b.adultCount || 0) + (b.childCount || 0);
+  return `
+    <div class="booking-item" data-id="${b.id}">
+      <div class="booking-ref">${b.bookingRef}</div>
+      <div class="booking-info">
+        <div class="booking-tour">${b.tourName || '未知行程'}</div>
+        <div class="booking-meta">
+          <span>👤 ${cap(b.leadName) || '-'}</span>
+          <span>🌍 ${b.country || '-'}</span>
+          <span>🗣 ${b.language || '-'}</span>
+          <span>📍 ${b.departureLocation || '-'}</span>
+        </div>
+      </div>
+      <div class="booking-right">
+        <div class="booking-date">${fmtDate(b.dateRequest)}</div>
+        <div class="booking-count">成人 ${b.adultCount || 0} + 兒童 ${b.childCount || 0} = ${total} 人</div>
+        <span class="status-badge ${status.cls}">${status.label}</span>
+      </div>
+    </div>`;
+}
+
+function bindBookingItemClicks(container) {
+  container.querySelectorAll('.booking-item').forEach(el => {
+    el.addEventListener('click', () => showDetail(parseInt(el.dataset.id)));
+  });
+}
+
+// ── Booking Detail Modal ─────────────────────────────────────
+function showDetail(id) {
+  const b = Storage.getAll().find(x => x.id === id);
+  if (!b) return;
+  currentBooking = b;
+
+  const status = getStatus(b.dateRequest);
+  document.getElementById('modal-title').textContent = `訂單 ${b.bookingRef}`;
+  document.getElementById('modal-subtitle').textContent =
+    `${b.tourName || ''}${b.package ? ' — ' + b.package : ''}`;
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="detail-grid">
+      <div class="detail-section">
+        <div class="detail-section-title">行程資訊</div>
+        <div class="detail-item">
+          <span class="detail-label">行程名稱</span>
+          <span class="detail-value">${b.tourName || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">套裝選項</span>
+          <span class="detail-value">${b.package || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">出發日期</span>
+          <span class="detail-value">${fmtDate(b.dateRequest)} <span class="status-badge ${status.cls}">${status.label}</span></span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">出發時間</span>
+          <span class="detail-value">${b.timeRequest && b.timeRequest !== 'NA' ? b.timeRequest : '未指定'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">集合地點</span>
+          <span class="detail-value">${b.departureLocation || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">導覽語言</span>
+          <span class="detail-value">${b.language || '-'}</span>
+        </div>
+        ${b.activityUrl ? `<div class="detail-item">
+          <span class="detail-label">Klook 連結</span>
+          <span class="detail-value"><a href="${b.activityUrl}" target="_blank">查看活動頁面 ↗</a></span>
+        </div>` : ''}
+      </div>
+      <div class="detail-section">
+        <div class="detail-section-title">主訂人資訊</div>
+        <div class="detail-item">
+          <span class="detail-label">姓名</span>
+          <span class="detail-value">${b.leadTitle ? `(${b.leadTitle}) ` : ''}${cap(b.leadName) || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">護照國籍</span>
+          <span class="detail-value">${b.country || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">Email</span>
+          <span class="detail-value"><a href="mailto:${b.leadEmail}">${b.leadEmail || '-'}</a></span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">電話</span>
+          <span class="detail-value">${b.leadMobile || '-'}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">成人人數</span>
+          <span class="detail-value">${b.adultCount || 0} 位</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">兒童人數</span>
+          <span class="detail-value">${b.childCount || 0} 位</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label">總人數</span>
+          <span class="detail-value"><strong>${(b.adultCount || 0) + (b.childCount || 0)} 位</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="participants-section">
+      <div class="participants-header">
+        <h3>旅客名單 (${b.participants ? b.participants.length : 0} 人)</h3>
+      </div>
+      ${renderParticipants(b)}
+    </div>
+  `;
+
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+
+function renderParticipants(b) {
+  if (!b.participants || b.participants.length === 0) {
+    return '<p style="color:var(--text-muted);font-size:13px">無旅客資料</p>';
+  }
+
+  const rows = b.participants.map(p => {
+    const age = calcAge(p.dob, b.dateRequest);
+    let badge = '';
+    if (age !== null) {
+      if (age < 3) badge = `<span class="age-badge age-infant">${age} 歲・嬰兒</span>`;
+      else if (age < 12) badge = `<span class="age-badge age-child">${age} 歲・兒童</span>`;
+      else badge = `<span class="age-badge age-adult">${age} 歲・成人</span>`;
+    }
+    return `<tr>
+      <td style="color:var(--text-muted);font-weight:600">${p.num}</td>
+      <td class="name-cell"><strong>${cap(p.firstName)} ${cap(p.lastName)}</strong></td>
+      <td>${p.dob || '-'}</td>
+      <td>${badge || '-'}</td>
+      <td class="passport-num">${p.passport || '-'}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="table-wrapper">
+      <table class="participants-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>姓名</th>
+            <th>出生日期</th>
+            <th>出遊時年齡</th>
+            <th>護照號碼</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+  currentBooking = null;
+}
+
+// ── Delete Booking ───────────────────────────────────────────
+function deleteCurrentBooking() {
+  if (!currentBooking) return;
+  if (!confirm(`確定要刪除訂單 ${currentBooking.bookingRef}？此操作無法復原。`)) return;
+  Storage.remove(currentBooking.id);
+  showToast(`✓ 訂單 ${currentBooking.bookingRef} 已刪除`);
+  closeModal();
+  renderDashboard();
+  renderBookingsList();
+}
+
+// ── Import ───────────────────────────────────────────────────
+function handleImport() {
+  const text = document.getElementById('email-input').value.trim();
+  const resultEl = document.getElementById('parse-result');
+
+  if (!text) {
+    resultEl.className = 'parse-result error';
+    resultEl.textContent = '❌ 請先貼上 Klook 訂單確認信內容';
+    return;
+  }
+
+  const booking = parseKlookEmail(text);
+
+  if (!booking || !booking.bookingRef) {
+    resultEl.className = 'parse-result error';
+    resultEl.textContent = '❌ 無法解析訂單資料。請確認貼上完整的 Klook 訂單確認信，且包含「Booking reference ID:」欄位。';
+    return;
+  }
+
+  const added = Storage.add(booking);
+  if (!added) {
+    resultEl.className = 'parse-result error';
+    resultEl.textContent = `⚠️ 訂單 ${booking.bookingRef} 已存在，無法重複匯入。`;
+    return;
+  }
+
+  resultEl.className = 'parse-result success';
+  resultEl.textContent =
+    `✅ 成功匯入訂單 ${booking.bookingRef}！` +
+    `共 ${booking.participants.length} 位旅客，` +
+    `出發日期：${fmtDate(booking.dateRequest)}，` +
+    `集合地點：${booking.departureLocation || '未指定'}`;
+
+  document.getElementById('email-input').value = '';
+  renderDashboard();
+  renderBookingsList();
+  showToast(`✓ 訂單 ${booking.bookingRef} 匯入成功！`);
+}
+
+// ── Export CSV ───────────────────────────────────────────────
+function exportCSV() {
+  if (!currentBooking) return;
+  const b = currentBooking;
+
+  const csvRows = [
+    ['訂單編號', b.bookingRef],
+    ['行程名稱', b.tourName],
+    ['套裝選項', b.package],
+    ['出發日期', b.dateRequest],
+    ['出發時間', b.timeRequest],
+    ['集合地點', b.departureLocation],
+    ['導覽語言', b.language],
+    ['主訂人', `${b.leadTitle || ''} ${cap(b.leadName)}`.trim()],
+    ['主訂人國籍', b.country],
+    ['聯絡 Email', b.leadEmail],
+    ['聯絡電話', b.leadMobile],
+    ['成人人數', b.adultCount],
+    ['兒童人數', b.childCount],
+    [],
+    ['#', '名字', '姓氏', '出生日期', '出遊年齡', '護照號碼']
+  ];
+
+  (b.participants || []).forEach(p => {
+    const age = calcAge(p.dob, b.dateRequest);
+    csvRows.push([
+      p.num,
+      cap(p.firstName),
+      cap(p.lastName),
+      p.dob || '',
+      age !== null ? age : '',
+      p.passport || ''
+    ]);
+  });
+
+  const csv = csvRows
+    .map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${b.bookingRef}_旅客名單.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('✓ CSV 已下載');
+}
+
+// ── Start ────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', init);
+
+</script>
+</body>
+</html>
