@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage'
 import LoginPage    from './pages/LoginPage'
 import ChangePasswordModal from './components/ChangePasswordModal'
 import { useScheduleStore } from './store/scheduleStore'
+import { useOrderStore } from './store/orderStore'
 import { useAuth } from './auth/useAuth'
 
 const NAV_ITEMS = [
@@ -85,7 +86,10 @@ function Sidebar({ onChangePw }: { onChangePw: () => void }) {
 
 function AuthenticatedApp() {
   const { touch, checkExpiry } = useAuth()
+  const { init } = useOrderStore()
   const [showChangePw, setShowChangePw] = useState(false)
+
+  useEffect(() => { init() }, [init])
 
   // Activity tracking for session timeout
   useEffect(() => {
