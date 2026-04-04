@@ -4,7 +4,7 @@ const SESSION_MS = 30 * 60 * 1000 // 30 分鐘
 
 // 預設密碼 hash（SHA-256 of "routor2026"）
 // 使用者可在設定中更改
-const DEFAULT_HASH = '7b6e4f8a2c1d9e3f5a7b6e4f8a2c1d9e3f5a7b6e4f8a2c1d9e3f5a7b6e4f8a'
+const DEFAULT_HASH = '1cdeed9ce0bcf9c3b5a3390b704c5a12a431551cd4fcb2ec566eb75d1a291e02'
 
 async function sha256(text: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
