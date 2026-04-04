@@ -42,6 +42,6 @@ export const useStaffStore = create<StaffStore>()(
       openDriverModal: (driver = null) => set({ driverModal: { open: true, driver } }),
       closeDriverModal: () => set({ driverModal: { open: false, driver: null } }),
     }),
-    { name: 'lute-staff-v1' }
+    { name: 'lute-staff-v2' }
   )
 )

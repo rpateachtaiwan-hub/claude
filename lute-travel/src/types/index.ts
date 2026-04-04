@@ -28,6 +28,7 @@ export interface Order {
   statusNote?: string
   meetingTime?: string
   guideId?: string
+  driverId?: string
   representativeName?: string
   phone?: string
   email?: string
@@ -36,20 +37,30 @@ export interface Order {
 }
 
 // ─── Staff types ───────────────────────────────────────────────────────────────
-export interface Guide {
+/** 導遊與司機共用的個人 / 財務欄位 */
+export interface StaffBase {
   id: string
   name: string
   englishName?: string
+  dateOfBirth?: string      // 出生年月日
+  idNumber?: string         // 身分證字號
   phone: string
-  preferredLanguages: string[]
+  email?: string
+  registeredAddress?: string // 戶籍地址
+  mailingAddress?: string    // 通訊地址
+  bankCode?: string          // 銀行代號
+  branchCode?: string        // 分行代號
+  bankAccount?: string       // 帳戶號碼
+  accountName?: string       // 戶名
   notes?: string
+}
+
+export interface Guide extends StaffBase {
+  preferredLanguages: string[]
   incompatibleDrivers?: string[]
 }
 
-export interface Driver {
-  id: string
-  name: string
-  phone?: string
+export interface Driver extends StaffBase {
   licensePlate?: string
   vehicleType: '大巴' | '中巴' | '小巴' | 'VAN'
 }

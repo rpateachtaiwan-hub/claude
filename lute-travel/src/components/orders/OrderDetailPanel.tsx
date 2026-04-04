@@ -1,7 +1,9 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useOrderStore } from '../../store/orderStore'
+import { useStaffStore } from '../../store/staffStore'
 import { STATUS_LABELS, STATUS_COLORS } from '../../types'
 import { format, parseISO } from 'date-fns'
+import DispatchModal from '../dispatch/DispatchModal'
 
 function fmtDate(d?: string) {
   if (!d) return '-'
@@ -29,8 +31,12 @@ function Row({ label, value }: { label: string; value?: React.ReactNode }) {
 
 export default function OrderDetailPanel() {
   const { modalState, selectedOrder, closeModal, openModal } = useOrderStore()
+  const { guides, drivers } = useStaffStore()
+  const [showDispatch, setShowDispatch] = useState(false)
   if (modalState !== 'detail' || !selectedOrder) return null
   const o = selectedOrder as import('../../types').Order
+  const guide = guides.find(g => g.id === o.guideId)
+  const driver = drivers.find(d => d.id === o.driverId)
 
   function copyRef() {
     navigator.clipboard.writeText(o.bookingRef)
@@ -112,6 +118,23 @@ export default function OrderDetailPanel() {
             </div>
           </section>
 
+          {/* Guide / Driver */}
+          <section>
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">導遊 / 司機</h3>
+            <div className="space-y-2">
+              <Row label="導遊" value={guide ? `${guide.name}${guide.englishName ? ` (${guide.englishName})` : ''}` : '未指派'} />
+              <Row label="司機" value={driver ? `${driver.name} · ${driver.vehicleType}` : '未指派'} />
+            </div>
+            {(guide || driver) && (
+              <button
+                onClick={() => setShowDispatch(true)}
+                className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors"
+              >
+                📨 發送排班通知
+              </button>
+            )}
+          </section>
+
           {o.statusNote && (
             <section>
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">備註</h3>
@@ -191,6 +214,8 @@ export default function OrderDetailPanel() {
           to { transform: translateX(0); }
         }
       `}</style>
+
+      {showDispatch && <DispatchModal order={o} onClose={() => setShowDispatch(false)} />}
     </div>
   )
 }

@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { v4 as uuid } from 'uuid'
 import { useOrderStore } from '../../store/orderStore'
+import { useStaffStore } from '../../store/staffStore'
+import { useScheduleStore } from '../../store/scheduleStore'
 import { Order, Passenger, PLATFORMS, LANGUAGES, PRODUCTS } from '../../types'
+import { autoAssign } from '../../utils/autoAssign'
 
 const EMPTY_PASSENGER = (): Omit<Passenger, 'id' | 'orderRef'> => ({
   sequenceNo: 1,
@@ -35,6 +38,8 @@ const EMPTY_ORDER = (): Omit<Order, 'id' | 'passengers'> => ({
 
 export default function OrderModal() {
   const { modalState, selectedOrder, prefillData, closeModal, addOrder, updateOrder } = useOrderStore()
+  const { guides, drivers } = useStaffStore()
+  const { slots } = useScheduleStore()
   const isOpen = modalState === 'add' || modalState === 'edit'
   const isEdit = modalState === 'edit'
 
@@ -43,6 +48,18 @@ export default function OrderModal() {
     { ...EMPTY_PASSENGER(), isRepresentative: true }
   ])
   const [activeTab, setActiveTab] = useState<'order' | 'passengers'>('order')
+  const [suggestion, setSuggestion] = useState<{ guideId: string; driverId: string; reason: string } | null>(null)
+
+  // Run auto-assign when tourDate or language changes
+  const runAutoAssign = useCallback((tourDate: string, language: string, currentGuideId?: string) => {
+    if (!tourDate || currentGuideId) return // don't overwrite manual selection
+    const result = autoAssign(tourDate, language, guides, drivers, slots)
+    setSuggestion({
+      guideId: result.guide?.id || '',
+      driverId: result.driver?.id || '',
+      reason: result.reason,
+    })
+  }, [guides, drivers, slots])
 
   useEffect(() => {
     if (!isOpen) return
@@ -164,7 +181,10 @@ export default function OrderModal() {
                 <input type="date" value={form.orderDate} onChange={(e) => set('orderDate', e.target.value)} className={inp} />
               </Field>
               <Field label="行程日期 *">
-                <input required type="date" value={form.tourDate} onChange={(e) => set('tourDate', e.target.value)} className={inp} />
+                <input required type="date" value={form.tourDate} onChange={(e) => {
+                  set('tourDate', e.target.value)
+                  runAutoAssign(e.target.value, form.language, form.guideId)
+                }} className={inp} />
               </Field>
               <Field label="商品屬性">
                 <select value={form.productCode} onChange={(e) => set('productCode', e.target.value)} className={inp}>
@@ -177,7 +197,10 @@ export default function OrderModal() {
                 </select>
               </Field>
               <Field label="語種">
-                <select value={form.language} onChange={(e) => set('language', e.target.value)} className={inp}>
+                <select value={form.language} onChange={(e) => {
+                  set('language', e.target.value)
+                  runAutoAssign(form.tourDate, e.target.value, form.guideId)
+                }} className={inp}>
                   {LANGUAGES.map((l) => <option key={l}>{l}</option>)}
                 </select>
               </Field>
@@ -213,6 +236,56 @@ export default function OrderModal() {
                 <textarea value={form.statusNote || ''} onChange={(e) => set('statusNote', e.target.value)}
                   className={`${inp} resize-none`} rows={2} />
               </Field>
+
+              {/* ── 導遊 / 司機指派 ── */}
+              <div className="col-span-2 border-t border-gray-100 pt-4 mt-1">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">導遊 / 司機指派</p>
+                  {form.tourDate && (
+                    <button type="button"
+                      onClick={() => {
+                        set('guideId', '')
+                        set('driverId', '')
+                        runAutoAssign(form.tourDate, form.language, '')
+                      }}
+                      className="text-xs text-blue-600 hover:underline"
+                    >↺ 重新自動建議</button>
+                  )}
+                </div>
+
+                {suggestion && !form.guideId && (
+                  <div className="mb-3 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs">
+                    <span className="text-blue-700">
+                      💡 {suggestion.reason}：
+                      <strong>{guides.find(g => g.id === suggestion.guideId)?.name || '—'}</strong>（導遊）
+                      {suggestion.driverId && <>、<strong>{drivers.find(d => d.id === suggestion.driverId)?.name}</strong>（司機）</>}
+                    </span>
+                    <button type="button"
+                      onClick={() => { set('guideId', suggestion.guideId); set('driverId', suggestion.driverId); setSuggestion(null) }}
+                      className="ml-3 px-2.5 py-1 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 shrink-0"
+                    >採用</button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="指派導遊">
+                    <select value={form.guideId || ''} onChange={(e) => set('guideId', e.target.value)} className={inp}>
+                      <option value="">— 未指派 —</option>
+                      {guides.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}{g.englishName ? ` (${g.englishName})` : ''}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="指派司機">
+                    <select value={form.driverId || ''} onChange={(e) => set('driverId', e.target.value)} className={inp}>
+                      <option value="">— 未指派 —</option>
+                      {drivers.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name} · {d.vehicleType}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              </div>
             </div>
           )}
 
