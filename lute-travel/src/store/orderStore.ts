@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { Order, Filters, ModalState } from '../types'
 import { MOCK_ORDERS } from '../data/mockData'
-import { supabase, dbToOrder, dbToPassenger, orderToDb } from '../lib/supabase'
+import { supabase, hasSupabase, dbToOrder, dbToPassenger, orderToDb } from '../lib/supabase'
 
 interface OrderStore {
   orders: Order[]
@@ -28,7 +28,7 @@ const DEFAULT_FILTERS: Filters = {
   productCode: '', status: '', search: '',
 }
 
-const hasSupabase = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY)
+// hasSupabase is imported from supabase.ts
 
 export const useOrderStore = create<OrderStore>()((set, get) => ({
   orders: [],

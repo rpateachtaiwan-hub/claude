@@ -3,11 +3,12 @@ import { createClient } from '@supabase/supabase-js'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.warn('Supabase env vars not set — falling back to localStorage mode')
-}
+export const hasSupabase = !!(SUPABASE_URL && SUPABASE_ANON_KEY)
 
-export const supabase = createClient(SUPABASE_URL || '', SUPABASE_ANON_KEY || '')
+// Use a placeholder URL when env vars are missing to prevent createClient crash
+export const supabase = hasSupabase
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : createClient('https://placeholder.supabase.co', 'placeholder')
 
 // ── Type mappers: snake_case (DB) ↔ camelCase (app) ──────────────────────────
 
