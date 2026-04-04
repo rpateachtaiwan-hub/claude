@@ -1,10 +1,13 @@
-import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom'
 import OrdersPage   from './pages/OrdersPage'
 import SchedulePage from './pages/SchedulePage'
 import StaffPage    from './pages/StaffPage'
 import DashboardPage from './pages/DashboardPage'
+import LoginPage    from './pages/LoginPage'
+import ChangePasswordModal from './components/ChangePasswordModal'
 import { useScheduleStore } from './store/scheduleStore'
+import { useAuth } from './auth/useAuth'
 
 const NAV_ITEMS = [
   { to: '/orders',    icon: '📋', label: '訂單管理',  sub: 'Orders'   },
@@ -13,8 +16,9 @@ const NAV_ITEMS = [
   { to: '/dashboard', icon: '📊', label: '損益統計',  sub: 'Dashboard'},
 ]
 
-function Sidebar() {
+function Sidebar({ onChangePw }: { onChangePw: () => void }) {
   const { slots } = useScheduleStore()
+  const { logout } = useAuth()
   const today = new Date().toISOString().slice(0, 10)
   const todayNoGuide = slots.filter((s) => s.date === today && !s.guideId).length
 
@@ -55,6 +59,23 @@ function Sidebar() {
         ))}
       </nav>
 
+      <div className="px-2 pb-2 space-y-0.5">
+        <button
+          onClick={onChangePw}
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+        >
+          <span className="text-base w-5 text-center">🔑</span>
+          <span>變更密碼</span>
+        </button>
+        <button
+          onClick={logout}
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:bg-red-900 hover:text-red-300 transition-colors"
+        >
+          <span className="text-base w-5 text-center">🚪</span>
+          <span>登出</span>
+        </button>
+      </div>
+
       <div className="px-4 py-3 border-t border-slate-700 text-[10px] text-slate-600">
         v2.0 · 路特旅行社
       </div>
@@ -62,21 +83,47 @@ function Sidebar() {
   )
 }
 
+function AuthenticatedApp() {
+  const { touch, checkExpiry } = useAuth()
+  const [showChangePw, setShowChangePw] = useState(false)
+
+  // Activity tracking for session timeout
+  useEffect(() => {
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll']
+    const handler = () => touch()
+    events.forEach((e) => window.addEventListener(e, handler, { passive: true }))
+    return () => events.forEach((e) => window.removeEventListener(e, handler))
+  }, [touch])
+
+  // Poll for session expiry every minute
+  useEffect(() => {
+    const id = setInterval(checkExpiry, 60_000)
+    return () => clearInterval(id)
+  }, [checkExpiry])
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      <Sidebar onChangePw={() => setShowChangePw(true)} />
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <Routes>
+          <Route path="/" element={<Navigate to="/orders" replace />} />
+          <Route path="/orders"    element={<OrdersPage />} />
+          <Route path="/schedule/*" element={<SchedulePage />} />
+          <Route path="/staff"     element={<StaffPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
+        </Routes>
+      </main>
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
+    </div>
+  )
+}
+
 export default function App() {
+  const { isAuthenticated } = useAuth()
+
   return (
     <BrowserRouter>
-      <div className="flex h-screen overflow-hidden bg-gray-50">
-        <Sidebar />
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <Routes>
-            <Route path="/" element={<Navigate to="/orders" replace />} />
-            <Route path="/orders"   element={<OrdersPage />} />
-            <Route path="/schedule/*" element={<SchedulePage />} />
-            <Route path="/staff"    element={<StaffPage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-          </Routes>
-        </main>
-      </div>
+      {isAuthenticated ? <AuthenticatedApp /> : <LoginPage />}
     </BrowserRouter>
   )
 }

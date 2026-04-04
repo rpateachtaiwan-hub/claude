@@ -1,0 +1,2 @@
+http://lute-travel.netlify.app/* https://lute-travel.netlify.app/:splat 301!
+/* /index.html 200
