@@ -4,6 +4,7 @@ import { useStaffStore } from '../../store/staffStore'
 import { STATUS_LABELS, STATUS_COLORS } from '../../types'
 import { format, parseISO } from 'date-fns'
 import DispatchModal from '../dispatch/DispatchModal'
+import CustomerMessageModal from './CustomerMessageModal'
 
 function fmtDate(d?: string) {
   if (!d) return '-'
@@ -33,6 +34,7 @@ export default function OrderDetailPanel() {
   const { modalState, selectedOrder, closeModal, openModal } = useOrderStore()
   const { guides, drivers } = useStaffStore()
   const [showDispatch, setShowDispatch] = useState(false)
+  const [showMessage, setShowMessage] = useState(false)
   if (modalState !== 'detail' || !selectedOrder) return null
   const o = selectedOrder as import('../../types').Order
   const guide = guides.find(g => g.id === o.guideId)
@@ -125,14 +127,22 @@ export default function OrderDetailPanel() {
               <Row label="導遊" value={guide ? `${guide.name}${guide.englishName ? ` (${guide.englishName})` : ''}` : '未指派'} />
               <Row label="司機" value={driver ? `${driver.name} · ${driver.vehicleType}` : '未指派'} />
             </div>
-            {(guide || driver) && (
+            <div className="mt-3 flex gap-2 flex-wrap">
+              {(guide || driver) && (
+                <button
+                  onClick={() => setShowDispatch(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors"
+                >
+                  📨 發送排班通知
+                </button>
+              )}
               <button
-                onClick={() => setShowDispatch(true)}
-                className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors"
+                onClick={() => setShowMessage(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-sm font-medium transition-colors"
               >
-                📨 發送排班通知
+                💬 客服訊息
               </button>
-            )}
+            </div>
           </section>
 
           {o.statusNote && (
@@ -216,6 +226,7 @@ export default function OrderDetailPanel() {
       `}</style>
 
       {showDispatch && <DispatchModal order={o} onClose={() => setShowDispatch(false)} />}
+      {showMessage && <CustomerMessageModal order={o} onClose={() => setShowMessage(false)} />}
     </div>
   )
 }
