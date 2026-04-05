@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useOrderStore } from '../../store/orderStore'
+import { useStaffStore } from '../../store/staffStore'
 import { Order, STATUS_LABELS, STATUS_COLORS } from '../../types'
 import { format, parseISO } from 'date-fns'
 
@@ -21,6 +22,7 @@ function calcAge(dob: string, tourDate: string) {
 
 export default function OrderTable({ orders }: { orders: Order[] }) {
   const { openModal, cancelOrder } = useOrderStore()
+  const { guides, drivers } = useStaffStore()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [cancelTarget, setCancelTarget] = useState<{ id: string; ref: string } | null>(null)
   const [cancelNote, setCancelNote] = useState('')
@@ -45,7 +47,7 @@ export default function OrderTable({ orders }: { orders: Order[] }) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="overflow-auto flex-1 scrollbar-thin">
-        <table className="w-full text-sm border-collapse min-w-[1100px]">
+        <table className="w-full text-sm border-collapse min-w-[1300px]">
           <thead className="sticky top-0 z-10">
             <tr className="bg-gray-100 text-gray-600 text-xs uppercase tracking-wide">
               <th className="px-3 py-2.5 text-left w-8"></th>
@@ -56,6 +58,8 @@ export default function OrderTable({ orders }: { orders: Order[] }) {
               <th className="px-3 py-2.5 text-left">平台</th>
               <th className="px-3 py-2.5 text-left">語種</th>
               <th className="px-3 py-2.5 text-left">狀態</th>
+              <th className="px-3 py-2.5 text-left">導遊</th>
+              <th className="px-3 py-2.5 text-left">司機</th>
               <th className="px-3 py-2.5 text-left">代表人</th>
               <th className="px-3 py-2.5 text-left">集合時間</th>
               <th className="px-3 py-2.5 text-center">操作</th>
@@ -63,7 +67,7 @@ export default function OrderTable({ orders }: { orders: Order[] }) {
           </thead>
           <tbody>
             {orders.length === 0 && (
-              <tr><td colSpan={11} className="py-16 text-center text-gray-400">暫無訂單資料</td></tr>
+              <tr><td colSpan={13} className="py-16 text-center text-gray-400">暫無訂單資料</td></tr>
             )}
             {orders.map((o) => (
               <React.Fragment key={o.id}>
@@ -104,6 +108,12 @@ export default function OrderTable({ orders }: { orders: Order[] }) {
                       {STATUS_LABELS[o.status]}
                     </span>
                   </td>
+                  <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap text-xs">
+                    {o.guideId ? (guides.find(g => g.id === o.guideId)?.name || '-') : <span className="text-gray-300">未指派</span>}
+                  </td>
+                  <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap text-xs">
+                    {o.driverId ? (drivers.find(d => d.id === o.driverId)?.name || '-') : <span className="text-gray-300">未指派</span>}
+                  </td>
                   <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{o.representativeName || '-'}</td>
                   <td className="px-3 py-2.5 text-gray-600 font-mono">{o.meetingTime || '-'}</td>
                   <td className="px-3 py-2.5">
@@ -138,7 +148,7 @@ export default function OrderTable({ orders }: { orders: Order[] }) {
                 {/* Expanded passenger rows */}
                 {expanded.has(o.id) && (
                   <tr className="bg-blue-50/40">
-                    <td colSpan={11} className="px-6 py-3">
+                    <td colSpan={13} className="px-6 py-3">
                       <div className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
                         旅客名單 — {o.bookingRef} ({o.passengers.length} 人)
                       </div>
@@ -200,6 +210,7 @@ export default function OrderTable({ orders }: { orders: Order[] }) {
         <span>總人數 <strong className="text-gray-800">{totalPax}</strong> 人</span>
         <span className="text-green-600">有效 {orders.filter(o => o.status === 'active').length}</span>
         <span className="text-amber-600">待確認 {orders.filter(o => o.status === 'pending').length}</span>
+        <span className="text-blue-600">已完成 {orders.filter(o => o.status === 'completed').length}</span>
         <span className="text-red-500">取消 {orders.filter(o => o.status === 'cancelled').length}</span>
       </div>
 

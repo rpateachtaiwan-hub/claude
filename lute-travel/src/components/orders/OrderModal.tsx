@@ -173,6 +173,56 @@ export default function OrderModal() {
           {/* Section A */}
           {activeTab === 'order' && (
             <div className="p-6 grid grid-cols-2 gap-4">
+              {/* ── 導遊 / 司機指派 ── */}
+              <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-blue-800 uppercase tracking-wide">導遊 / 司機指派</p>
+                  {form.tourDate && (
+                    <button type="button"
+                      onClick={() => {
+                        set('guideId', '')
+                        set('driverId', '')
+                        runAutoAssign(form.tourDate, form.language, '')
+                      }}
+                      className="text-xs text-blue-600 hover:underline"
+                    >↺ 重新自動建議</button>
+                  )}
+                </div>
+
+                {suggestion && !form.guideId && (
+                  <div className="mb-3 flex items-center justify-between bg-white border border-blue-300 rounded-lg px-3 py-2 text-xs">
+                    <span className="text-blue-700">
+                      💡 {suggestion.reason}：
+                      <strong>{guides.find(g => g.id === suggestion.guideId)?.name || '—'}</strong>（導遊）
+                      {suggestion.driverId && <>、<strong>{drivers.find(d => d.id === suggestion.driverId)?.name}</strong>（司機）</>}
+                    </span>
+                    <button type="button"
+                      onClick={() => { set('guideId', suggestion.guideId); set('driverId', suggestion.driverId); setSuggestion(null) }}
+                      className="ml-3 px-2.5 py-1 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 shrink-0"
+                    >採用</button>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="指派導遊">
+                    <select value={form.guideId || ''} onChange={(e) => set('guideId', e.target.value)} className={inp}>
+                      <option value="">— 未指派 —</option>
+                      {guides.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}{g.englishName ? ` (${g.englishName})` : ''}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="指派司機">
+                    <select value={form.driverId || ''} onChange={(e) => set('driverId', e.target.value)} className={inp}>
+                      <option value="">— 未指派 —</option>
+                      {drivers.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name} · {d.vehicleType}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              </div>
+
               <Field label="訂單編號 *">
                 <input required value={form.bookingRef} onChange={(e) => set('bookingRef', e.target.value)}
                   className={inp} placeholder="AWB862233" />
@@ -215,6 +265,7 @@ export default function OrderModal() {
                   <option value="active">有效</option>
                   <option value="cancelled">取消</option>
                   <option value="pending">待確認</option>
+                  <option value="completed">已完成</option>
                 </select>
               </Field>
               <Field label="集合時間">
@@ -236,56 +287,6 @@ export default function OrderModal() {
                 <textarea value={form.statusNote || ''} onChange={(e) => set('statusNote', e.target.value)}
                   className={`${inp} resize-none`} rows={2} />
               </Field>
-
-              {/* ── 導遊 / 司機指派 ── */}
-              <div className="col-span-2 border-t border-gray-100 pt-4 mt-1">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">導遊 / 司機指派</p>
-                  {form.tourDate && (
-                    <button type="button"
-                      onClick={() => {
-                        set('guideId', '')
-                        set('driverId', '')
-                        runAutoAssign(form.tourDate, form.language, '')
-                      }}
-                      className="text-xs text-blue-600 hover:underline"
-                    >↺ 重新自動建議</button>
-                  )}
-                </div>
-
-                {suggestion && !form.guideId && (
-                  <div className="mb-3 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs">
-                    <span className="text-blue-700">
-                      💡 {suggestion.reason}：
-                      <strong>{guides.find(g => g.id === suggestion.guideId)?.name || '—'}</strong>（導遊）
-                      {suggestion.driverId && <>、<strong>{drivers.find(d => d.id === suggestion.driverId)?.name}</strong>（司機）</>}
-                    </span>
-                    <button type="button"
-                      onClick={() => { set('guideId', suggestion.guideId); set('driverId', suggestion.driverId); setSuggestion(null) }}
-                      className="ml-3 px-2.5 py-1 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 shrink-0"
-                    >採用</button>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  <Field label="指派導遊">
-                    <select value={form.guideId || ''} onChange={(e) => set('guideId', e.target.value)} className={inp}>
-                      <option value="">— 未指派 —</option>
-                      {guides.map((g) => (
-                        <option key={g.id} value={g.id}>{g.name}{g.englishName ? ` (${g.englishName})` : ''}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="指派司機">
-                    <select value={form.driverId || ''} onChange={(e) => set('driverId', e.target.value)} className={inp}>
-                      <option value="">— 未指派 —</option>
-                      {drivers.map((d) => (
-                        <option key={d.id} value={d.id}>{d.name} · {d.vehicleType}</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
-              </div>
             </div>
           )}
 

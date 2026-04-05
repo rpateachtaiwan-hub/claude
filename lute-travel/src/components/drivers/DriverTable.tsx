@@ -103,6 +103,15 @@ export default function DriverTable() {
                 {tab === 'basic' && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
+                      <F label="類型">
+                        <select {...register('staffType')} className={inp}>
+                          <option value="">— 請選擇 —</option>
+                          <option value="全職">全職</option>
+                          <option value="兼職">兼職</option>
+                          <option value="外包">外包</option>
+                          <option value="其他">其他</option>
+                        </select>
+                      </F>
                       <F label="中文姓名 *"><input {...register('name', { required: true })} className={inp} /></F>
                       <F label="英文姓名"><input {...register('englishName')} className={inp} /></F>
                       <F label="出生年月日"><input {...register('dateOfBirth')} type="date" className={inp} /></F>

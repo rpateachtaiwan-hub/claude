@@ -24,7 +24,7 @@ export interface Order {
   platformRevenue: number
   cashRevenue: number
   language: string
-  status: 'active' | 'cancelled' | 'pending'
+  status: 'active' | 'cancelled' | 'pending' | 'completed'
   statusNote?: string
   meetingTime?: string
   guideId?: string
@@ -40,6 +40,7 @@ export interface Order {
 /** 導遊與司機共用的個人 / 財務欄位 */
 export interface StaffBase {
   id: string
+  staffType?: string          // 類型（例：全職、兼職、外包）
   name: string
   englishName?: string
   dateOfBirth?: string      // 出生年月日
@@ -119,11 +120,22 @@ export const PRODUCTS = [
 ]
 
 export const STATUS_LABELS: Record<Order['status'], string> = {
-  active: '有效', cancelled: '取消', pending: '待確認',
+  active: '有效', cancelled: '取消', pending: '待確認', completed: '已完成',
 }
 export const STATUS_COLORS: Record<Order['status'], string> = {
   active: 'bg-green-100 text-green-800',
   cancelled: 'bg-red-100 text-red-800',
   pending: 'bg-amber-100 text-amber-800',
+  completed: 'bg-blue-100 text-blue-800',
+}
+
+// ─── Product types ─────────────────────────────────────────────────────────────
+export interface Product {
+  id: string
+  shortName: string           // 路特簡稱
+  emailTitle: string          // 信件稱呼
+  platformNameZh: string      // 平台商品名稱(中)
+  platformNameEn: string      // 平台商品名稱(英)
+  meetingPoint: string        // 集合時間地點
 }
 export const VEHICLE_TYPES = ['大巴', '中巴', '小巴', 'VAN'] as const
