@@ -56,14 +56,31 @@ export async function listAccounts(): Promise<Account[]> {
  * 建議建立 view `open_items_with_remaining`（remaining = original_amount − Σallocations）。
  */
 export async function listOpenItems(
-  type: OpenItemType,
-  onlyOpen = true,
+  type?: OpenItemType,
+  onlyOpen = false,
 ): Promise<OpenItemWithRemaining[]> {
-  let q = supabase.from('open_items_with_remaining').select('*').eq('type', type)
+  let q = supabase.from('open_items_with_remaining').select('*')
+  if (type) q = q.eq('type', type)
   if (onlyOpen) q = q.neq('status', 'closed')
   const { data, error } = await q.order('origin_date')
   if (error) throw error
   return (data ?? []).map(dbToOpenItem)
+}
+
+/** 取得已過帳分錄明細（供損益/試算表/對帳）。 */
+export async function listPostedLines(): Promise<
+  Array<{ accountId: number; debit: number; credit: number; period: string }>
+> {
+  const { data, error } = await supabase
+    .from('journal_lines')
+    .select('account_id, debit, credit, journal_entries(period)')
+  if (error) throw error
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    accountId: row.account_id as number,
+    debit: Number(row.debit ?? 0),
+    credit: Number(row.credit ?? 0),
+    period: ((row.journal_entries as { period?: string } | null)?.period) ?? '',
+  }))
 }
 
 // ── 過帳（呼叫 DB 交易函式）──────────────────────────────────────────────────

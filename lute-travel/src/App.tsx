@@ -6,6 +6,7 @@ import StaffPage    from './pages/StaffPage'
 import DashboardPage from './pages/DashboardPage'
 import LoginPage    from './pages/LoginPage'
 import ProductsPage from './pages/ProductsPage'
+import AccountingPage from './pages/AccountingPage'
 import ChangePasswordModal from './components/ChangePasswordModal'
 import { useScheduleStore } from './store/scheduleStore'
 import { useOrderStore } from './store/orderStore'
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/staff',     icon: '👥', label: '導遊/司機', sub: 'Staff'    },
   { to: '/products',  icon: '🗂️', label: '商品管理',  sub: 'Products' },
   { to: '/dashboard', icon: '📊', label: '損益統計',  sub: 'Dashboard'},
+  { to: '/accounting',icon: '💰', label: '會計沖銷',  sub: 'Accounting'},
 ]
 
 function Sidebar({ onChangePw }: { onChangePw: () => void }) {
@@ -118,6 +120,7 @@ function AuthenticatedApp() {
           <Route path="/staff"     element={<StaffPage />} />
           <Route path="/products"  element={<ProductsPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/accounting" element={<AccountingPage />} />
         </Routes>
       </main>
       {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}

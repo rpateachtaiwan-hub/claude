@@ -10,9 +10,22 @@
 | 1 | DB schema + migrations + 科目 seed | ✅ |
 | 2 | 沖銷引擎 + 過帳服務 + 單元測試 | ✅ |
 | 3 | 報表查詢（損益 / 試算表 / 帳齡 / 對帳） | ✅（純函式 + 測試） |
-| 4 | UI（傳票輸入 → 沖銷工作台 → 報表） | ⬜ 待辦 |
+| 4 | UI（沖銷工作台 / 傳票輸入 / 未沖帳齡 / 報表 / 科目） | ✅ |
 | 5 | Google Sheets 匯入腳本 | ⬜ **執行前須與你確認** |
 | 6 | Auth + 角色權限 | ⬜ 待辦 |
+
+### UI（里程碑 4）
+
+導覽列新增「💰 會計沖銷」(`/accounting`)，內含 5 個分頁：
+
+- **沖銷工作台**（核心）：選 AR/AP → 勾選未沖清單並改每筆套用金額 → 設定日期/銀行/手續費 → 即時預覽自動產生的平衡傳票 → 確認過帳。
+- **傳票輸入**：多行借貸，即時顯示是否平衡，不平衡無法送出。
+- **未沖明細 / 帳齡**：依 0-30/31-60/61-90/90+ 分桶，並可「認列掛帳」建立應收/應付。
+- **報表**：損益表 / 試算表 / 對帳檢核。
+- **科目主檔**：科目清單檢視。
+
+未設定 `VITE_SUPABASE_*` 時自動進入**示範模式**（種子科目 + 幾筆未沖項，資料存 localStorage），
+沖銷流程完全可操作；設定後則讀 DB 並透過 `post_settlement` RPC 過帳。
 
 ## 檔案
 
@@ -65,6 +78,5 @@ psql "$DATABASE_URL" -f supabase/seed/accounts_seed.sql
 
 ## 下一步
 
-- Milestone 4：沖銷工作台 UI（選 AR/AP → 多選未沖 → 改每筆金額 → 預覽傳票 → 過帳）。
 - Milestone 5：Google Sheets 匯入 —— **依規格書要求，動真實資料前會先產出歸併草稿給你人工檢視，不自動定案。**
-- Milestone 6：Supabase Auth 角色（bookkeeper / viewer）+ RLS。
+- Milestone 6：Supabase Auth 角色（bookkeeper / viewer）+ RLS；屆時開放科目維護、手動傳票/掛帳的 DB 寫入（目前 Supabase 模式僅沖銷工作台已接 RPC）。
