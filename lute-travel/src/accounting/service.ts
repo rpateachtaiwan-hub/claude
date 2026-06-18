@@ -8,6 +8,7 @@
 import { supabase } from '../lib/supabase'
 import type {
   Account,
+  DraftLine,
   OpenItemType,
   OpenItemWithRemaining,
   SettlementInput,
@@ -105,4 +106,63 @@ function defaultBatchNo(input: SettlementInput): string {
   const d = input.settlementDate.replace(/-/g, '')
   const prefix = input.type === 'receipt' ? 'R' : 'P'
   return `${prefix}-${d}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`
+}
+
+// ── 手動傳票過帳（DB 交易）──────────────────────────────────────────────────
+export async function postJournalEntry(
+  entry: { entryDate: string; summary: string; lines: DraftLine[] },
+  createdBy?: string,
+): Promise<number> {
+  const payload = {
+    entry_date: entry.entryDate,
+    summary: entry.summary,
+    source: 'manual',
+    created_by: createdBy ?? null,
+    lines: entry.lines.map((l) => ({
+      account_id: l.accountId, debit: l.debit, credit: l.credit,
+      memo: l.memo ?? null, open_item_id: l.openItemId ?? null,
+    })),
+  }
+  const { data, error } = await supabase.rpc('post_journal_entry', { payload })
+  if (error) throw error
+  return data as number
+}
+
+// ── 認列掛帳（DB 交易：建 open_item + 傳票）─────────────────────────────────
+export async function postRecognition(
+  input: {
+    kind: 'revenue' | 'cost'
+    entryDate: string
+    amount: number
+    counterparty: string
+    description: string
+    controlAccountId: number
+    pnlAccountId: number
+  },
+  createdBy?: string,
+): Promise<number> {
+  const payload = {
+    kind: input.kind, entry_date: input.entryDate, amount: input.amount,
+    counterparty: input.counterparty, description: input.description,
+    control_account_id: input.controlAccountId, pnl_account_id: input.pnlAccountId,
+    created_by: createdBy ?? null,
+  }
+  const { data, error } = await supabase.rpc('post_recognition', { payload })
+  if (error) throw error
+  return data as number
+}
+
+// ── 科目維護 ─────────────────────────────────────────────────────────────────
+function accountToDb(a: Omit<Account, 'id'> & { id?: number }) {
+  return {
+    ...(a.id ? { id: a.id } : {}),
+    code: a.code, name: a.name, category: a.category,
+    normal_balance: a.normalBalance, is_open_item: a.isOpenItem, active: a.active,
+  }
+}
+
+export async function upsertAccount(a: Omit<Account, 'id'> & { id?: number }): Promise<Account> {
+  const { data, error } = await supabase.from('accounts').upsert(accountToDb(a), { onConflict: 'code' }).select().single()
+  if (error) throw error
+  return dbToAccount(data as Record<string, unknown>)
 }

@@ -20,6 +20,9 @@ import {
   listOpenItems,
   listPostedLines,
   postSettlement as rpcPostSettlement,
+  postJournalEntry as rpcPostJournalEntry,
+  postRecognition as rpcPostRecognition,
+  upsertAccount as rpcUpsertAccount,
 } from '../accounting/service'
 import type { PostedLine } from '../accounting/reports'
 import type {
@@ -97,6 +100,7 @@ interface AccountingState {
     controlAccountId: number
     pnlAccountId: number
   }) => Promise<void>
+  saveAccount: (a: Omit<Account, 'id'> & { id?: number }) => Promise<void>
 }
 
 const LS_KEY = 'lute-accounting-v1'
@@ -209,7 +213,9 @@ export const useAccountingStore = create<AccountingState>()((set, get) => ({
   postManualEntry: async (e) => {
     const entry = buildEntry({ entryDate: e.entryDate, summary: e.summary, source: 'manual', lines: e.lines })
     if (get().usingSupabase) {
-      throw new Error('Supabase 模式的手動傳票過帳尚未接線（請走沖銷工作台或匯入）。')
+      await rpcPostJournalEntry(entry)
+      await get().init()
+      return
     }
     set((st) => {
       const entries = [...st.entries, { ...entry, id: `J-${Date.now()}` }]
@@ -225,7 +231,9 @@ export const useAccountingStore = create<AccountingState>()((set, get) => ({
         : buildCostRecognition({ entryDate: input.entryDate, amount: input.amount, controlAccountId: input.controlAccountId, pnlAccountId: input.pnlAccountId, summary: input.description })
 
     if (get().usingSupabase) {
-      throw new Error('Supabase 模式的掛帳認列尚未接線（待 post_recognition RPC / 匯入）。')
+      await rpcPostRecognition(input)
+      await get().init()
+      return
     }
 
     set((st) => {
@@ -247,6 +255,22 @@ export const useAccountingStore = create<AccountingState>()((set, get) => ({
       const openItems = [...st.openItems, openItem]
       saveLocal({ openItems, allocations: st.allocations, entries })
       return { openItems, entries }
+    })
+  },
+
+  saveAccount: async (a) => {
+    if (get().usingSupabase) {
+      await rpcUpsertAccount(a)
+      const accounts = await listAccounts()
+      set({ accounts })
+      return
+    }
+    set((st) => {
+      const exists = a.id != null && st.accounts.some((x) => x.id === a.id)
+      const accounts = exists
+        ? st.accounts.map((x) => (x.id === a.id ? { ...x, ...a, id: x.id } : x))
+        : [...st.accounts, { ...a, id: (st.accounts.reduce((m, x) => Math.max(m, x.id), 0) || 0) + 1 }]
+      return { accounts }
     })
   },
 }))
