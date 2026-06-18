@@ -23,11 +23,14 @@
    1. `supabase/migrations/0001_accounting_schema.sql`
    2. `supabase/migrations/0002_post_settlement_fn.sql`
    3. `supabase/migrations/0003_post_entry_recognition_fn.sql`
-   4. `supabase/seed/accounts_seed.sql`
+   4. `supabase/migrations/0004_rls.sql` ← 開啟資料保護（RLS）
+   5. `supabase/seed/accounts_seed.sql`
    （細節見 `supabase/README.md`）
 5. 記下兩個值：**Project Settings → API**
    - `Project URL`（即 `VITE_SUPABASE_URL`）
    - `anon public` key（即 `VITE_SUPABASE_ANON_KEY`）
+6. **建立登入帳號**：左側 **Authentication → Users → Add user**，輸入 email + 密碼
+   （勾選 Auto Confirm User）。每位記帳人員建一個帳號。
 
 > 檔案儲存（例如日後存發票/憑證掃描）：Supabase → Storage → 建 bucket 即可，免費 1GB。
 
@@ -51,7 +54,7 @@
 
 ## 第 4 步：驗證
 
-1. 打開 Netlify 給的網址 → 用預設密碼 `routor2026` 登入（登入後請到「🔑 變更密碼」改掉）。
+1. 打開 Netlify 給的網址 → 用第 1 步建立的 **email + 密碼**登入（接上 Supabase 後不再用 `routor2026`）。
 2. 進「💰 會計沖銷」→ 右上角**不該**再出現「示範模式」標籤（代表已連上 Supabase）。
 3. 在「未沖明細／帳齡」按「認列掛帳」建一筆 → 到「沖銷工作台」沖掉 → 看報表/對帳同步。
 4. 重新整理 `/accounting` 頁不會 404（SPA 轉址已設定）。
@@ -69,8 +72,11 @@ Netlify → Domain management → Add a domain，可綁你自己的網域（如 
 | Supabase | 500MB DB、1GB 儲存、閒置 7 天暫停 | 要 24h 不暫停、需每日備份/時光回溯 | Pro $25/月：8GB、不暫停、PITR |
 | Netlify | 100GB 流量/月、300 建置分鐘 | 流量/協作者變多 | Pro $19/月 |
 
-## 安全提醒（上線前務必）
+## 安全機制（已完成，里程碑 6 簡化版）
 
-- `anon` key 是公開金鑰（前端用），**真正的資料保護要靠 Row Level Security（RLS）**。
-- 目前 RLS **尚未設定**（里程碑 6）。在正式開放多人輸入真實帳務前，請先完成 Auth 角色 + RLS，否則任何拿到網址與 anon key 的人都可能讀寫資料。
-- 過渡期可行做法：先只給內部人員網址、用現有密碼登入；但 RLS 仍應盡快補上。
+- **RLS 已開啟**（`0004_rls.sql`）：會計資料表只有「已登入者」能讀寫，未登入（僅持 anon key）一律被資料庫拒絕。
+- **登入改用 Supabase Auth**：帳號由你在 Supabase → Authentication → Users 建立；前端登入頁變成 email + 密碼。
+- `anon` key 可公開沒關係 —— 真正的閘門是「必須登入」。
+- 目前是**單一角色**（登入即有完整讀寫權）。若日後要分 `bookkeeper`（可記帳）/ `viewer`（唯讀），
+  可再加一張 `user_roles` 表與依角色判斷的 policy；本階段先求簡單。
+- 變更密碼：登入後側欄「🔑 變更密碼」會直接改你的 Supabase 帳號密碼。

@@ -10,7 +10,10 @@
    1. `migrations/0001_accounting_schema.sql` — 資料表、enum、約束、平衡 trigger、未沖餘額 view
    2. `migrations/0002_post_settlement_fn.sql` — `post_settlement()` 沖銷過帳
    3. `migrations/0003_post_entry_recognition_fn.sql` — `post_journal_entry()`、`post_recognition()`
-   4. `seed/accounts_seed.sql` — 科目主檔
+   4. `migrations/0004_rls.sql` — Row Level Security（登入者才可讀寫）
+   5. `seed/accounts_seed.sql` — 科目主檔
+
+> 套用 `0004_rls.sql` 後，務必到 **Authentication → Users** 至少建立一個帳號，否則前端登入後仍無法讀寫資料。
 
 **方法 B — psql / Supabase CLI**
 ```bash
@@ -18,6 +21,7 @@
 psql "$DATABASE_URL" -f supabase/migrations/0001_accounting_schema.sql
 psql "$DATABASE_URL" -f supabase/migrations/0002_post_settlement_fn.sql
 psql "$DATABASE_URL" -f supabase/migrations/0003_post_entry_recognition_fn.sql
+psql "$DATABASE_URL" -f supabase/migrations/0004_rls.sql
 psql "$DATABASE_URL" -f supabase/seed/accounts_seed.sql
 ```
 
@@ -54,7 +58,12 @@ npm run dev
 - Supabase 內建每日自動備份（Pro 方案含 PITR 時光回溯）。確認位置：Project → Database → Backups。
 - 還原：於 Backups 頁選還原點；重大操作前可先用 `pg_dump "$DATABASE_URL" > backup.sql` 手動備份。
 
+## 安全（里程碑 6，已完成簡化版）
+
+- `0004_rls.sql` 已開啟 RLS：會計資料表僅「已登入者(authenticated)」可讀寫，未登入一律拒絕。
+- 前端登入改用 Supabase Auth（email + 密碼），帳號在 Authentication → Users 建立。
+- 目前單一角色（登入即完整權限）；`bookkeeper`/`viewer` 細分留待日後（加 `user_roles` 表 + 角色判斷 policy）。
+
 ## 尚未處理（後續里程碑）
 
 - **里程碑 5**：Google Sheets 匯入 —— 動真實資料前會先產歸併草稿給你人工檢視。
-- **里程碑 6**：Auth 角色（bookkeeper / viewer）+ Row Level Security。目前 RPC 以呼叫端權限執行，尚未加 RLS 政策；上線多人前務必補上。

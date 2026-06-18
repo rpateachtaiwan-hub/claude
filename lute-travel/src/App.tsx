@@ -129,11 +129,19 @@ function AuthenticatedApp() {
 }
 
 export default function App() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, ready, init } = useAuth()
+
+  useEffect(() => { init() }, [init])
 
   return (
     <BrowserRouter>
-      {isAuthenticated ? <AuthenticatedApp /> : <LoginPage />}
+      {!ready ? (
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center text-slate-400 text-sm">載入中…</div>
+      ) : isAuthenticated ? (
+        <AuthenticatedApp />
+      ) : (
+        <LoginPage />
+      )}
     </BrowserRouter>
   )
 }
