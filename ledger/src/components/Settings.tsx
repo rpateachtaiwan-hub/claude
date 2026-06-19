@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
+import { downloadCSV, toCSV } from '../lib/csv'
 import type { Account, Category } from '../core/types'
 
 const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
@@ -41,7 +42,16 @@ export default function Settings() {
       <section>
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-bold text-gray-900">科目表</h2>
-          <button onClick={() => setAdding(true)} className="text-sm text-blue-600 hover:text-blue-700">+ 新增科目</button>
+          <div className="flex gap-3">
+            <button onClick={() => downloadCSV('科目表', toCSV(['編號', '科目', '類別'], accounts.map((a) => [a.code, a.name, catZh[a.category]])))} className="text-sm text-gray-500 hover:text-gray-700">⬇ 匯出</button>
+            <button onClick={() => setAdding(true)} className="text-sm text-blue-600 hover:text-blue-700">+ 新增科目</button>
+          </div>
+        </div>
+        <div className="bg-blue-50/60 border border-blue-200 rounded-lg p-3 text-xs text-gray-600 leading-relaxed mb-2">
+          <b>「類別」是會計五大分類</b>，決定這個科目出現在哪張報表、以及借貸方向：
+          <br />· <b>資產</b>（現金、應收、設備…）、<b>負債</b>（應付、借款…）、<b>權益</b>（資本）→ 出現在<b>資產負債表</b>。
+          <br />· <b>收入</b>、<b>費用</b> → 出現在<b>損益表</b>。
+          <br />系統靠它自動判斷一筆該記借方或貸方，所以匯入科目時務必正確（依編號開頭自動判定，可在此微調）。
         </div>
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <table className="w-full text-sm">

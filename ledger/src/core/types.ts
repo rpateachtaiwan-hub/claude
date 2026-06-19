@@ -35,8 +35,10 @@ export interface JournalEntry {
   counterparty?: string
   source: EntrySource
   lines: EntryLine[]
-  /** 若此筆為應計（產生應收/應付），記錄是否已收/付清 */
+  /** 若此筆為應計（產生應收/應付），記錄是否已收/付清（沖銷後為 true） */
   settled?: boolean
+  /** 若此筆為「沖銷（收/付款）」分錄，指向被沖銷的應計傳票 id */
+  settles?: string
   createdAt?: string
 }
 

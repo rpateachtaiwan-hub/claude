@@ -1,14 +1,28 @@
 import React from 'react'
 import { useLedger } from '../store/useLedger'
 import { formatTWD } from '../core/money'
+import { downloadCSV, toCSV } from '../lib/csv'
 
 export default function Transactions() {
   const { entries, accounts, deleteEntry } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const sorted = [...entries].sort((a, b) => (a.date < b.date ? 1 : -1))
 
+  function exportCsv() {
+    const rows = sorted.map((e) => {
+      const dr = e.lines.find((l) => l.debit > 0)!
+      const cr = e.lines.find((l) => l.credit > 0)!
+      return [e.date, e.description, e.counterparty ?? '', accName(dr.accountCode), accName(cr.accountCode), dr.debit,
+        e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金']
+    })
+    downloadCSV('交易明細', toCSV(['日期', '摘要', '對象', '借方科目', '貸方科目', '金額', '類型'], rows))
+  }
+
   return (
-    <div className="max-w-3xl mx-auto p-6">
+    <div className="max-w-3xl mx-auto p-6 space-y-3">
+      <div className="flex justify-end">
+        <button onClick={exportCsv} className="px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">⬇ 匯出 Excel</button>
+      </div>
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead>

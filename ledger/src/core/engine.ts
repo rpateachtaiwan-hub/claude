@@ -49,6 +49,7 @@ export function buildEntry(input: {
   source: JournalEntry['source']
   lines: EntryLine[]
   settled?: boolean
+  settles?: string
   id?: string
 }): JournalEntry {
   assertBalanced(input.lines)
@@ -60,6 +61,7 @@ export function buildEntry(input: {
     source: input.source,
     lines: input.lines,
     settled: input.settled,
+    settles: input.settles,
     createdAt: new Date().toISOString(),
   }
 }
@@ -74,6 +76,7 @@ export function twoLegEntry(input: {
   debitCode: string
   creditCode: string
   settled?: boolean
+  settles?: string
   id?: string
 }): JournalEntry {
   const amount = assertInteger(input.amount, '金額')

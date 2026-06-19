@@ -4,12 +4,16 @@ import QuickEntry from './components/QuickEntry'
 import Transactions from './components/Transactions'
 import Reports from './components/Reports'
 import Settings from './components/Settings'
+import Settlement from './components/Settlement'
+import ImportData from './components/ImportData'
 
-type Tab = 'entry' | 'list' | 'reports' | 'settings'
+type Tab = 'entry' | 'settle' | 'list' | 'reports' | 'import' | 'settings'
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'entry', label: '記一筆', icon: '✏️' },
+  { key: 'settle', label: '沖銷', icon: '🔁' },
   { key: 'list', label: '明細', icon: '📒' },
   { key: 'reports', label: '報表', icon: '📊' },
+  { key: 'import', label: '匯入', icon: '📥' },
   { key: 'settings', label: '設定', icon: '⚙️' },
 ]
 
@@ -48,8 +52,10 @@ export default function App() {
         ) : (
           <>
             {tab === 'entry' && <QuickEntry />}
+            {tab === 'settle' && <Settlement />}
             {tab === 'list' && <Transactions />}
             {tab === 'reports' && <Reports />}
+            {tab === 'import' && <ImportData />}
             {tab === 'settings' && <Settings />}
           </>
         )}

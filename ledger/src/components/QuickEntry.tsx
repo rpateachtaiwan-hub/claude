@@ -15,7 +15,7 @@ export default function QuickEntry() {
   const [counterparty, setCounterparty] = useState('')
   const [cashAccountCode, setCashAccountCode] = useState('1102')
   const [accrual, setAccrual] = useState(false)
-  const [chosen, setChosen] = useState('')
+  const [override, setOverride] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   const cashAccounts = accounts.filter((a) => a.isCash)
@@ -30,19 +30,21 @@ export default function QuickEntry() {
 
   const sug = useMemo(() => (amount > 0 ? preview(input) : null), [input, amount, preview])
 
-  // 建議科目變動時，同步預設選擇
+  // 改摘要/方向/對象/應計時，清除手動選擇 → 重新跟隨建議
   useEffect(() => {
-    if (sug) setChosen(sug.accountCode)
-  }, [sug?.accountCode]) // eslint-disable-line react-hooks/exhaustive-deps
+    setOverride(null)
+  }, [description, direction, counterparty, accrual])
 
+  // 顯示用科目：使用者手動選的優先，否則跟隨即時建議
+  const chosen = override ?? sug?.accountCode ?? ''
   const previewEntry = amount > 0 && chosen ? composeEntry(input, chosen) : null
-  const corrected = !!sug && chosen !== sug.accountCode
+  const corrected = override != null && !!sug && override !== sug.accountCode
 
   async function onSubmit() {
     if (amount <= 0 || !description || !chosen) return
     await commit(input, chosen)
     setToast(`已記一筆：${direction === 'in' ? '收入' : '支出'} ${formatTWD(amount)} → ${accName(chosen)}${corrected ? '（已學習你的更正）' : ''}`)
-    setAmount(0); setDescription(''); setCounterparty('')
+    setAmount(0); setDescription(''); setCounterparty(''); setOverride(null)
     setTimeout(() => setToast(null), 4000)
   }
 
@@ -91,7 +93,7 @@ export default function QuickEntry() {
 
           <div>
             <label className="block text-xs text-gray-500 mb-1">分類科目（不對的話直接改，我會學起來）</label>
-            <select value={chosen} onChange={(e) => setChosen(e.target.value)}
+            <select value={chosen} onChange={(e) => setOverride(e.target.value)}
               className={`${inp} ${corrected ? 'ring-1 ring-amber-400' : ''}`}>
               {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}（{catZh(a.category)}）</option>)}
             </select>

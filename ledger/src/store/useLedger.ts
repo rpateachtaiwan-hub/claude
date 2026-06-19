@@ -8,6 +8,7 @@ import { supabase, hasSupabase } from '../lib/supabase'
 import { DEFAULT_ACCOUNTS } from '../core/accounts'
 import { buildEntry } from '../core/engine'
 import { composeEntry, learn, suggest, SEED_RULES } from '../core/suggest'
+import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
 import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
 
 const LS_KEY = 'qing-ledger-v1'
@@ -29,6 +30,12 @@ interface LedgerState extends PersistShape {
   deleteEntry: (id: string) => Promise<void>
   addAccount: (a: Account) => Promise<void>
   deleteRule: (id: string) => Promise<void>
+  // 沖銷
+  openItems: () => OpenItem[]
+  settle: (itemId: string, amount: number, cashAccountCode: string, date: string) => Promise<void>
+  // 批次匯入
+  addEntriesBulk: (entries: JournalEntry[]) => Promise<void>
+  addAccountsBulk: (accounts: Account[]) => Promise<void>
 }
 
 function loadLocal(): PersistShape | null {
@@ -118,5 +125,39 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     set({ rules })
     if (get().usingSupabase) await supabase.from('rules').delete().eq('id', id)
     else saveLocal({ accounts: get().accounts, rules, entries: get().entries })
+  },
+
+  openItems: () => computeOpenItems(get().entries, get().accounts),
+
+  settle: async (itemId, amount, cashAccountCode, date) => {
+    const item = computeOpenItems(get().entries, get().accounts).find((i) => i.id === itemId)
+    if (!item) throw new Error('找不到未沖項目')
+    const entry = buildSettlement(item, { date, amount, cashAccountCode })
+    const entries = [...get().entries, entry]
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+  },
+
+  addEntriesBulk: async (newEntries) => {
+    const entries = [...get().entries, ...newEntries]
+    set({ entries })
+    if (get().usingSupabase) {
+      await supabase.from('entries').insert(newEntries.map((e) => ({ id: e.id, date: e.date, data: e })))
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+    }
+  },
+
+  addAccountsBulk: async (incoming) => {
+    const byCode = new Map(get().accounts.map((a) => [a.code, a]))
+    for (const a of incoming) byCode.set(a.code, a)
+    const accounts = [...byCode.values()]
+    set({ accounts })
+    if (get().usingSupabase) {
+      await supabase.from('accounts').upsert(incoming.map((a) => ({ code: a.code, data: a })))
+    } else {
+      saveLocal({ accounts, rules: get().rules, entries: get().entries })
+    }
   },
 }))
