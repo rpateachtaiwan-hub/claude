@@ -1,13 +1,15 @@
 import React, { useState } from 'react'
 
+const SOURCES = ['/logo.png', '/logo.jpg', '/logo.jpeg', '/logo.svg']
+
 /**
- * 顯示品牌 Logo。若 public/logo.png 存在則優先使用你的原始檔，
- * 否則顯示以品牌色重繪的 SVG 版本。
+ * 顯示品牌 Logo。依序嘗試 public/logo.png → .jpg → .jpeg → .svg；
+ * 都沒有時顯示以品牌色重繪的 SVG 版本。
  */
 export default function Logo({ height = 34 }: { height?: number }) {
-  const [imgOk, setImgOk] = useState(true)
-  if (imgOk) {
-    return <img src="/logo.png" alt="ROUTOR" style={{ height }} onError={() => setImgOk(false)} />
+  const [idx, setIdx] = useState(0)
+  if (idx < SOURCES.length) {
+    return <img src={SOURCES[idx]} alt="ROUTOR" style={{ height }} onError={() => setIdx(idx + 1)} />
   }
   return (
     <div className="flex items-center gap-2.5" style={{ height }}>
@@ -28,3 +30,4 @@ export default function Logo({ height = 34 }: { height?: number }) {
     </div>
   )
 }
+
