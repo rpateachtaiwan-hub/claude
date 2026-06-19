@@ -30,10 +30,24 @@ export default function Reports() {
   const bs = balanceSheet(entries, accounts, asOf)
   const cf = cashFlow(entries, accounts, range)
 
+  // 依年的損益：各月損益總結
+  const monthly = useMemo(() => {
+    if (!(tab === 'pnl' && gran === 'year' && period)) return []
+    return Array.from({ length: 12 }, (_, i) => {
+      const mm = String(i + 1).padStart(2, '0')
+      const r = profitAndLoss(entries, accounts, { from: `${period}-${mm}-01`, to: `${period}-${mm}-31` })
+      return { month: `${period}-${mm}`, revenue: r.revenue, expense: r.expense, net: r.netIncome }
+    }).filter((m) => m.revenue !== 0 || m.expense !== 0)
+  }, [tab, gran, period, entries, accounts])
+
   function exportCsv() {
     if (tab === 'pnl') {
-      const rows = pnl.rows.map((r) => [r.code, r.name, r.category === 'revenue' ? '收入' : '費用', r.amount])
+      const rows: (string | number)[][] = pnl.rows.map((r) => [r.code, r.name, r.category === 'revenue' ? '收入' : '費用', r.amount])
       rows.push(['', '收入合計', '', pnl.revenue], ['', '費用合計', '', pnl.expense], ['', '本期淨利', '', pnl.netIncome])
+      if (monthly.length) {
+        rows.push(['', '', '', ''], ['', '── 各月損益 ──', '', ''])
+        monthly.forEach((m) => rows.push([m.month, `收入 ${m.revenue} / 費用 ${m.expense}`, '淨利', m.net]))
+      }
       downloadCSV(`損益表_${label}`, toCSV(['編號', '科目', '類別', '金額'], rows))
     } else if (tab === 'bs') {
       const rows: (string | number)[][] = []
@@ -88,6 +102,41 @@ export default function Reports() {
           <Total name="費用合計" amount={pnl.expense} />
           <Total name="本期淨利" amount={pnl.netIncome} strong highlight />
         </Card>
+      )}
+
+      {tab === 'pnl' && gran === 'year' && monthly.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <h2 className="text-base font-bold text-gray-900">各月損益總結</h2>
+          <p className="text-xs text-gray-400 mb-3">{period} 年 · 各月份小結</p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-gray-400 text-xs border-b border-gray-100">
+                <th className="py-1.5 text-left">月份</th>
+                <th className="py-1.5 text-right">收入</th>
+                <th className="py-1.5 text-right">費用</th>
+                <th className="py-1.5 text-right">損益</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthly.map((m) => (
+                <tr key={m.month} className="border-b border-gray-50">
+                  <td className="py-1.5 text-gray-700">{m.month.slice(5)} 月</td>
+                  <td className="py-1.5 text-right tabular-nums text-gray-600">{formatTWD(m.revenue)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-gray-600">{formatTWD(m.expense)}</td>
+                  <td className={`py-1.5 text-right tabular-nums font-medium ${m.net < 0 ? 'text-rose-600' : 'text-gray-900'}`}>{formatTWD(m.net)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="font-bold text-blue-700 border-t">
+                <td className="py-2">全年合計</td>
+                <td className="py-2 text-right tabular-nums">{formatTWD(pnl.revenue)}</td>
+                <td className="py-2 text-right tabular-nums">{formatTWD(pnl.expense)}</td>
+                <td className={`py-2 text-right tabular-nums ${pnl.netIncome < 0 ? 'text-rose-600' : ''}`}>{formatTWD(pnl.netIncome)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       )}
 
       {tab === 'bs' && (
