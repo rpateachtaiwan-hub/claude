@@ -12,7 +12,7 @@ type Mode = 'tx' | 'accounts'
 export default function ImportData() {
   const [mode, setMode] = useState<Mode>('tx')
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-4">
+    <div className="w-full p-6 space-y-4">
       <div className="flex gap-2">
         <button onClick={() => setMode('tx')} className={tab(mode === 'tx')}>匯入歷史交易</button>
         <button onClick={() => setMode('accounts')} className={tab(mode === 'accounts')}>匯入會計科目</button>
@@ -85,9 +85,17 @@ function ImportTx() {
 
       {parsed?.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
 
+      {parsed && (parsed.totalRows > 0 || parsed.entries.length > 0) && (
+        <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
+          讀到 <b>{parsed.totalRows}</b> 列 · 可匯入 <b className="text-brand">{parsed.entries.length}</b> 筆
+          {parsed.skippedNoAmount > 0 && <span> · 略過無金額 {parsed.skippedNoAmount} 列</span>}
+          {parsed.skippedNoDate > 0 && <span className="text-amber-600"> · 略過日期無法辨識 {parsed.skippedNoDate} 列</span>}
+        </div>
+      )}
+
       {parsed && parsed.entries.length > 0 && (
         <>
-          <div className="text-sm text-gray-600">預覽（共 {parsed.entries.length} 筆，顯示前 {Math.min(10, parsed.entries.length)} 筆）：</div>
+          <div className="text-sm text-gray-600">預覽（顯示前 {Math.min(10, parsed.entries.length)} 筆）：</div>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <table className="w-full text-sm">
               <thead><tr className="bg-gray-50 text-gray-500 text-xs">
@@ -129,7 +137,10 @@ function findCol(headers: string[], ...keys: string[]): number {
 }
 
 function mapTxRows(rows: string[][], accounts: Account[]) {
-  const result = { entries: [] as JournalEntry[], unmatchedAccounts: [] as string[], error: null as string | null }
+  const result = {
+    entries: [] as JournalEntry[], unmatchedAccounts: [] as string[],
+    error: null as string | null, totalRows: 0, skippedNoAmount: 0, skippedNoDate: 0,
+  }
   if (rows.length < 2) { result.error = '檔案需含標題列與至少一列資料。'; return result }
   const headers = rows[0]
   const cDate = findCol(headers, '付款日期', '日期')
@@ -146,13 +157,22 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
   const cashAccounts = accounts.filter((a) => a.isCash)
   const defaultCash = cashAccounts[0]?.code ?? '1102'
   const unmatched = new Set<string>()
+  let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
 
   for (const row of rows.slice(1)) {
-    const dateRaw = row[cDate] ?? ''
+    // 整列皆空則略過（不計入統計）
+    if (row.every((c) => !c || !c.trim())) continue
+    result.totalRows++
+
     const income = cIn >= 0 ? parseAmount(row[cIn] ?? '') : 0
     const expense = cOut >= 0 ? parseAmount(row[cOut] ?? '') : 0
     const amount = income > 0 ? income : expense
-    if (amount <= 0 || !/\d{4}/.test(dateRaw)) continue
+    if (amount <= 0) { result.skippedNoAmount++; continue }
+
+    let date = normalizeDate(row[cDate] ?? '')
+    if (date) lastDate = date
+    else date = lastDate
+    if (!date) { result.skippedNoDate++; continue }
 
     const direction: 'in' | 'out' = income > 0 ? 'in' : 'out'
     const desc = (cDesc >= 0 ? row[cDesc] : '') || (cCat >= 0 ? row[cCat] : '') || '匯入'
@@ -164,7 +184,7 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
       if (hit) cashCode = hit.code
       else unmatched.add(acctText)
     }
-    const input: QuickInput = { date: normalizeDate(dateRaw), amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
+    const input: QuickInput = { date, amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
     const sug = suggest(input, [], accounts) // 匯入採預設分類，之後可在明細修改
     try { result.entries.push(buildEntry(composeEntry(input, sug.accountCode))) } catch { /* skip */ }
   }

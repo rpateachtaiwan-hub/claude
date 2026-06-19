@@ -61,9 +61,28 @@ export function parseAmount(s: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** 正規化日期成 YYYY-MM-DD（支援 2026/01/03、2026-1-3 等）。 */
+/** 正規化日期成 YYYY-MM-DD；無法辨識時回傳空字串。 */
 export function normalizeDate(s: string): string {
-  const m = String(s).trim().match(/(\d{4})[/-](\d{1,2})[/-](\d{1,2})/)
-  if (!m) return s.trim()
-  return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  const t = String(s).trim()
+  if (!t) return ''
+  // 已是 ISO 或 yyyy/m/d
+  let m = t.match(/(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})/)
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  // m/d/yyyy 或 m/d/yy（美式）
+  m = t.match(/(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})/)
+  if (m) {
+    let y = m[3]
+    if (y.length === 2) y = (Number(y) >= 70 ? '19' : '20') + y
+    return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  }
+  // Excel 序列日期（純數字，1900 起算）
+  if (/^\d{4,5}(\.\d+)?$/.test(t)) {
+    const serial = Math.floor(Number(t))
+    const ms = (serial - 25569) * 86400 * 1000 // 25569 = 1970-01-01 的序號
+    const d = new Date(ms)
+    if (!isNaN(d.getTime())) {
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+    }
+  }
+  return ''
 }

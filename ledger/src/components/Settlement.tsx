@@ -27,7 +27,7 @@ export default function Settlement() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-4">
+    <div className="w-full p-6 space-y-4">
       <div className="flex gap-2">
         {(['AP', 'AR'] as const).map((t) => (
           <button key={t} onClick={() => setType(t)}

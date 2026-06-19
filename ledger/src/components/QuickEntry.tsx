@@ -68,7 +68,7 @@ export default function QuickEntry() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-4">
+    <div className="w-full p-6 space-y-4">
       <div className="flex gap-2">
         <button onClick={() => setDirection('out')}
           className={`flex-1 py-2.5 rounded-lg text-sm font-medium ${direction === 'out' ? 'bg-accent text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>支出（付錢）</button>

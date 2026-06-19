@@ -16,7 +16,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
+    <div className="w-full p-6 space-y-6">
       {/* Gemini 智慧判斷 */}
       <section>
         <h2 className="text-sm font-bold text-gray-900 mb-2">智慧分類（Google Gemini）</h2>

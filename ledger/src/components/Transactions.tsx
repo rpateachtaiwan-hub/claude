@@ -51,7 +51,7 @@ export default function Transactions() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-3">
+    <div className="w-full p-6 space-y-3">
       <div className="flex items-center gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋摘要 / 對象 / 科目 / 金額…"
           className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
