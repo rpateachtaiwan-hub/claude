@@ -4,12 +4,11 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 取自 ROUTOR logo 的色彩延伸
-        brand: { DEFAULT: '#2E6FD6', dark: '#1F569F', light: '#5B93E8', soft: '#EAF1FC' },
+        // 主色 #3962B2 及延伸色
+        brand: { DEFAULT: '#3962B2', dark: '#2C4D8C', light: '#6E8FCB', soft: '#ECF1FA' },
         ink: '#2D3340',
-        accent: { DEFAULT: '#E2483D', dark: '#C13328' },
+        accent: { DEFAULT: '#C2453B', dark: '#9E372F' }, // 與藍主色相容的暖色（支出/警示）
       },
     },
   },
-  plugins: [],
 }

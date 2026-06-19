@@ -12,7 +12,7 @@ type Mode = 'tx' | 'accounts'
 export default function ImportData() {
   const [mode, setMode] = useState<Mode>('tx')
   return (
-    <div className="w-full p-6 space-y-4">
+    <div className="w-full p-4 sm:p-6 space-y-4">
       <div className="flex gap-2">
         <button onClick={() => setMode('tx')} className={tab(mode === 'tx')}>匯入歷史交易</button>
         <button onClick={() => setMode('accounts')} className={tab(mode === 'accounts')}>匯入會計科目</button>
@@ -96,8 +96,8 @@ function ImportTx() {
       {parsed && parsed.entries.length > 0 && (
         <>
           <div className="text-sm text-gray-600">預覽（顯示前 {Math.min(10, parsed.entries.length)} 筆）：</div>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
               <thead><tr className="bg-gray-50 text-gray-500 text-xs">
                 <th className="px-2 py-2 text-left">日期</th><th className="px-2 py-2 text-left">內容</th>
                 <th className="px-2 py-2 text-left">借</th><th className="px-2 py-2 text-left">貸</th><th className="px-2 py-2 text-right">金額</th>
@@ -216,8 +216,8 @@ function ImportAccounts() {
       <FileBox onRows={handle} />
       {parsed && parsed.length > 0 && (
         <>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-h-64 overflow-y-auto">
-            <table className="w-full text-sm">
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto max-h-64 overflow-y-auto">
+            <table className="w-full min-w-[640px] text-sm">
               <thead><tr className="bg-gray-50 text-gray-500 text-xs"><th className="px-3 py-2 text-left">編號</th><th className="px-3 py-2 text-left">科目</th><th className="px-3 py-2 text-left">判定類別</th></tr></thead>
               <tbody>
                 {parsed.map((a) => (

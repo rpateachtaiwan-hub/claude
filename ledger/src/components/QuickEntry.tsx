@@ -68,7 +68,7 @@ export default function QuickEntry() {
   }
 
   return (
-    <div className="w-full p-6 space-y-4">
+    <div className="w-full p-4 sm:p-6 space-y-4">
       <div className="flex gap-2">
         <button onClick={() => setDirection('out')}
           className={`flex-1 py-2.5 rounded-lg text-sm font-medium ${direction === 'out' ? 'bg-accent text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>支出（付錢）</button>
@@ -77,7 +77,7 @@ export default function QuickEntry() {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp} /></Field>
           <Field label="金額">
             <input type="number" value={amount || ''} min={0} placeholder="0" autoFocus

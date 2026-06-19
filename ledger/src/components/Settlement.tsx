@@ -27,7 +27,7 @@ export default function Settlement() {
   }
 
   return (
-    <div className="w-full p-6 space-y-4">
+    <div className="w-full p-4 sm:p-6 space-y-4">
       <div className="flex gap-2">
         {(['AP', 'AR'] as const).map((t) => (
           <button key={t} onClick={() => setType(t)}
@@ -39,8 +39,8 @@ export default function Settlement() {
 
       {err && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{err}</div>}
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-gray-500 text-xs">
               <th className="px-3 py-2.5 text-left">日期</th>

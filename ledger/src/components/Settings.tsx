@@ -16,7 +16,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
 
   return (
-    <div className="w-full p-6 space-y-6">
+    <div className="w-full p-4 sm:p-6 space-y-6">
       {/* Gemini 智慧判斷 */}
       <section>
         <h2 className="text-sm font-bold text-gray-900 mb-2">智慧分類（Google Gemini）</h2>
@@ -52,8 +52,8 @@ export default function Settings() {
           <br />· <b>資產</b>（現金、應收、設備…）、<b>負債</b>（應付、借款…）、<b>權益</b>（資本）→ <b>資產負債表</b>。
           <br />· <b>收入</b>、<b>費用</b> → <b>損益表</b>。
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead><tr className="bg-gray-50 text-gray-500 text-xs">
               <th className="px-3 py-2 text-left">編號</th><th className="px-3 py-2 text-left">名稱</th>
               <th className="px-3 py-2 text-left">類別</th><th className="px-3 py-2 text-center">現金</th><th className="px-3 py-2 text-center w-16">操作</th>

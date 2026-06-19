@@ -17,6 +17,7 @@ export default function Reports() {
   const { years, months } = useMemo(() => {
     const ys = new Set<string>(); const ms = new Set<string>()
     for (const e of entries) { ys.add(e.date.slice(0, 4)); ms.add(e.date.slice(0, 7)) }
+    ys.add(String(new Date().getFullYear())) // 永遠可選當年
     return { years: [...ys].sort().reverse(), months: [...ms].sort().reverse() }
   }, [entries])
 
@@ -79,7 +80,7 @@ export default function Reports() {
   }
 
   return (
-    <div className="w-full p-6 space-y-4">
+    <div className="w-full p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {([['pnl', '損益表'], ['bs', '資產負債表'], ['cf', '現金流量表']] as [Tab, string][]).map(([t, l]) => (
           <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === t ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>{l}</button>
@@ -185,8 +186,8 @@ function PnlMatrix({ mx }: { mx: Mx }) {
       <div className="overflow-x-auto">
         <table className="text-xs border-collapse">
           <thead>
-            <tr className="bg-slate-100 text-gray-600">
-              <th className={`${nameTd} bg-slate-100 min-w-[150px] z-10`}>科目名稱</th>
+            <tr className="bg-brand-soft text-gray-600">
+              <th className={`${nameTd} bg-brand-soft min-w-[150px] z-10`}>科目名稱</th>
               <th className="border border-gray-200 px-2 py-1.5 text-center min-w-[56px]">編號</th>
               {mx.mm.map((m) => <th key={m} className="border border-gray-200 px-2 py-1.5 text-right whitespace-nowrap min-w-[80px]">{mx.year}/{m}</th>)}
               <th className="border border-gray-200 px-2 py-1.5 text-right whitespace-nowrap min-w-[90px]">全年</th>
@@ -194,13 +195,28 @@ function PnlMatrix({ mx }: { mx: Mx }) {
           </thead>
           <tbody>
             {/* 收入 */}
-            <tr className="bg-slate-500 text-white font-semibold">
-              <td className={`${nameTd} bg-slate-500`}>收入</td>
-              <td className="border border-gray-200"></td>
+            <tr className="bg-brand text-white font-semibold">
+              <td className={`${nameTd} bg-brand`}>收入</td>
+              <td className="border border-brand-dark/30"></td>
               {mx.per.map((p, i) => <td key={i} className={td}>{p.revenue === 0 ? 0 : formatTWD(p.revenue)}</td>)}
               <td className={td}>{formatTWD(mx.annual.revenue)}</td>
             </tr>
             {mx.revAccts.map((r) => (
+              <tr key={r.code} className="bg-brand-soft text-gray-700">
+                <td className={`${nameTd} bg-brand-soft`}>{r.name}</td>
+                <td className={codeTd}>{r.code}</td>
+                {mx.per.map((p, i) => <td key={i} className={td}>{numCell(mx.amt(p, r.code))}</td>)}
+                <td className={`${td} font-semibold`}>{numCell(mx.amt(mx.annual, r.code))}</td>
+              </tr>
+            ))}
+            {/* 成本 */}
+            <tr className="bg-brand text-white font-semibold">
+              <td className={`${nameTd} bg-brand`}>成本</td>
+              <td className="border border-brand-dark/30"></td>
+              {mx.per.map((p, i) => <td key={i} className={td}>{p.expense === 0 ? 0 : formatTWD(p.expense)}</td>)}
+              <td className={td}>{formatTWD(mx.annual.expense)}</td>
+            </tr>
+            {mx.expAccts.map((r) => (
               <tr key={r.code} className="bg-amber-50 text-gray-700">
                 <td className={`${nameTd} bg-amber-50`}>{r.name}</td>
                 <td className={codeTd}>{r.code}</td>
@@ -208,31 +224,16 @@ function PnlMatrix({ mx }: { mx: Mx }) {
                 <td className={`${td} font-semibold`}>{numCell(mx.amt(mx.annual, r.code))}</td>
               </tr>
             ))}
-            {/* 成本 */}
-            <tr className="bg-slate-500 text-white font-semibold">
-              <td className={`${nameTd} bg-slate-500`}>成本</td>
-              <td className="border border-gray-200"></td>
-              {mx.per.map((p, i) => <td key={i} className={td}>{p.expense === 0 ? 0 : formatTWD(p.expense)}</td>)}
-              <td className={td}>{formatTWD(mx.annual.expense)}</td>
-            </tr>
-            {mx.expAccts.map((r) => (
-              <tr key={r.code} className="bg-rose-50 text-gray-700">
-                <td className={`${nameTd} bg-rose-50`}>{r.name}</td>
-                <td className={codeTd}>{r.code}</td>
-                {mx.per.map((p, i) => <td key={i} className={td}>{numCell(mx.amt(p, r.code))}</td>)}
-                <td className={`${td} font-semibold`}>{numCell(mx.amt(mx.annual, r.code))}</td>
-              </tr>
-            ))}
             {/* 稅前毛利 */}
-            <tr className="bg-slate-200 font-bold text-gray-900">
-              <td className={`${nameTd} bg-slate-200`}>稅前毛利</td>
+            <tr className="bg-brand-light/30 font-bold text-gray-900">
+              <td className={`${nameTd} bg-brand-light/30`}>稅前毛利</td>
               <td className="border border-gray-200"></td>
               {mx.per.map((p, i) => <td key={i} className={td}>{numCell(p.netIncome)}</td>)}
               <td className={td}>{numCell(mx.annual.netIncome)}</td>
             </tr>
             {/* 毛利率 */}
-            <tr className="bg-slate-100 text-gray-700">
-              <td className={`${nameTd} bg-slate-100`}>毛利率</td>
+            <tr className="bg-brand-soft text-gray-700">
+              <td className={`${nameTd} bg-brand-soft`}>毛利率</td>
               <td className="border border-gray-200"></td>
               {mx.per.map((p, i) => <td key={i} className={td}>{marginStr(p)}</td>)}
               <td className={td}>{marginStr(mx.annual)}</td>
