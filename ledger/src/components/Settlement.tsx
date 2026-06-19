@@ -31,7 +31,7 @@ export default function Settlement() {
       <div className="flex gap-2">
         {(['AP', 'AR'] as const).map((t) => (
           <button key={t} onClick={() => setType(t)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium ${type === t ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${type === t ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
             {t === 'AP' ? '應付（付款沖銷）' : '應收（收款沖銷）'}
           </button>
         ))}
@@ -74,7 +74,7 @@ export default function Settlement() {
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <button onClick={() => doSettle(it.id, it.remaining)}
-                      className="px-3 py-1 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700">沖銷</button>
+                      className="px-3 py-1 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-dark">沖銷</button>
                   </td>
                 </tr>
               )

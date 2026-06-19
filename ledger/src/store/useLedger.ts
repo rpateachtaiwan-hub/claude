@@ -7,11 +7,14 @@ import { create } from 'zustand'
 import { supabase, hasSupabase } from '../lib/supabase'
 import { DEFAULT_ACCOUNTS } from '../core/accounts'
 import { buildEntry } from '../core/engine'
-import { composeEntry, learn, suggest, SEED_RULES } from '../core/suggest'
+import { composeEntry, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
+import type { AiConfig } from '../core/ai'
 import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
 
 const LS_KEY = 'qing-ledger-v1'
+const LS_AI = 'qing-ledger-ai'
+const DEFAULT_AI: AiConfig = { apiKey: '', model: 'gemini-2.0-flash' }
 
 interface PersistShape {
   accounts: Account[]
@@ -22,20 +25,33 @@ interface PersistShape {
 interface LedgerState extends PersistShape {
   ready: boolean
   usingSupabase: boolean
+  aiConfig: AiConfig
 
   init: () => Promise<void>
+  /** 離線/無金鑰時的預設建議（不含學習規則） */
   preview: (input: QuickInput) => Suggestion
-  /** 記一筆：以最終選定的非現金腳科目過帳，並學習 */
+  /** 記一筆：以最終選定的非現金腳科目過帳 */
   commit: (input: QuickInput, chosenAccountCode: string) => Promise<JournalEntry>
+  updateEntry: (entry: JournalEntry) => Promise<void>
   deleteEntry: (id: string) => Promise<void>
   addAccount: (a: Account) => Promise<void>
-  deleteRule: (id: string) => Promise<void>
+  deleteAccount: (code: string) => Promise<void>
+  setAiConfig: (cfg: AiConfig) => void
   // 沖銷
   openItems: () => OpenItem[]
   settle: (itemId: string, amount: number, cashAccountCode: string, date: string) => Promise<void>
   // 批次匯入
   addEntriesBulk: (entries: JournalEntry[]) => Promise<void>
   addAccountsBulk: (accounts: Account[]) => Promise<void>
+}
+
+function loadAi(): AiConfig {
+  try {
+    const raw = localStorage.getItem(LS_AI)
+    return raw ? { ...DEFAULT_AI, ...JSON.parse(raw) } : DEFAULT_AI
+  } catch {
+    return DEFAULT_AI
+  }
 }
 
 function loadLocal(): PersistShape | null {
@@ -53,6 +69,7 @@ function saveLocal(s: PersistShape) {
 export const useLedger = create<LedgerState>()((set, get) => ({
   ready: false,
   usingSupabase: false,
+  aiConfig: DEFAULT_AI,
   accounts: [],
   rules: [],
   entries: [],
@@ -67,9 +84,9 @@ export const useLedger = create<LedgerState>()((set, get) => ({
         ])
         if (!accRes.error && accRes.data) {
           const accounts = (accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
-          const rules = (ruleRes.data?.length ? ruleRes.data.map((r) => r.data as Rule) : SEED_RULES)
+          const rules = (ruleRes.data?.length ? ruleRes.data.map((r) => r.data as Rule) : [])
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
-          set({ ready: true, usingSupabase: true, accounts, rules, entries })
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, entries })
           return
         }
       } catch {
@@ -80,30 +97,35 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     set({
       ready: true,
       usingSupabase: false,
+      aiConfig: loadAi(),
       accounts: local?.accounts ?? DEFAULT_ACCOUNTS,
-      rules: local?.rules ?? SEED_RULES,
+      rules: local?.rules ?? [],
       entries: local?.entries ?? [],
     })
   },
 
-  preview: (input) => suggest(input, get().rules, get().accounts),
+  preview: (input) => suggest(input, [], get().accounts),
+
+  setAiConfig: (cfg) => {
+    localStorage.setItem(LS_AI, JSON.stringify(cfg))
+    set({ aiConfig: cfg })
+  },
 
   commit: async (input, chosenAccountCode) => {
     const draft = composeEntry(input, chosenAccountCode)
     const entry = buildEntry(draft) // 驗證借貸平衡
-    const rules = learn(input, chosenAccountCode, get().rules)
     const entries = [...get().entries, entry]
-    set({ entries, rules })
-
-    if (get().usingSupabase) {
-      await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
-      const changed = rules.find((r) => r.accountCode === chosenAccountCode &&
-        r.keyword === (input.counterparty?.trim() || input.description?.trim() || '').toLowerCase())
-      if (changed) await supabase.from('rules').upsert({ id: changed.id, data: changed })
-    } else {
-      saveLocal({ accounts: get().accounts, rules, entries })
-    }
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
     return entry
+  },
+
+  updateEntry: async (entry) => {
+    const entries = get().entries.map((e) => (e.id === entry.id ? entry : e))
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').upsert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
   },
 
   deleteEntry: async (id) => {
@@ -120,11 +142,11 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     else saveLocal({ accounts, rules: get().rules, entries: get().entries })
   },
 
-  deleteRule: async (id) => {
-    const rules = get().rules.filter((r) => r.id !== id)
-    set({ rules })
-    if (get().usingSupabase) await supabase.from('rules').delete().eq('id', id)
-    else saveLocal({ accounts: get().accounts, rules, entries: get().entries })
+  deleteAccount: async (code) => {
+    const accounts = get().accounts.filter((a) => a.code !== code)
+    set({ accounts })
+    if (get().usingSupabase) await supabase.from('accounts').delete().eq('code', code)
+    else saveLocal({ accounts, rules: get().rules, entries: get().entries })
   },
 
   openItems: () => computeOpenItems(get().entries, get().accounts),

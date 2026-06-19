@@ -26,9 +26,9 @@ export default function Reports() {
     return { range: undefined, asOf: undefined, label: '全部期間' }
   }, [gran, period])
 
-  const pnl = profitAndLoss(entries, accounts, range)
-  const bs = balanceSheet(entries, accounts, asOf)
-  const cf = cashFlow(entries, accounts, range)
+  const pnl = profitAndLoss(entries, accounts, range, true)
+  const bs = balanceSheet(entries, accounts, asOf, true)
+  const cf = cashFlow(entries, accounts, range, true)
 
   // 依年的損益：各月損益總結
   const monthly = useMemo(() => {
@@ -71,7 +71,7 @@ export default function Reports() {
     <div className="max-w-2xl mx-auto p-6 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {([['pnl', '損益表'], ['bs', '資產負債表'], ['cf', '現金流量表']] as [Tab, string][]).map(([t, l]) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === t ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>{l}</button>
+          <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === t ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>{l}</button>
         ))}
         <button onClick={exportCsv} className="ml-auto px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">⬇ 匯出 Excel</button>
       </div>
@@ -128,7 +128,7 @@ export default function Reports() {
               ))}
             </tbody>
             <tfoot>
-              <tr className="font-bold text-blue-700 border-t">
+              <tr className="font-bold text-brand border-t">
                 <td className="py-2">全年合計</td>
                 <td className="py-2 text-right tabular-nums">{formatTWD(pnl.revenue)}</td>
                 <td className="py-2 text-right tabular-nums">{formatTWD(pnl.expense)}</td>
@@ -196,7 +196,7 @@ function Row({ name, amount }: { name: string; amount: number }) {
 }
 function Total({ name, amount, strong, highlight }: { name: string; amount: number; strong?: boolean; highlight?: boolean }) {
   return (
-    <div className={`flex justify-between text-sm py-1.5 border-t mt-1 ${strong ? 'font-bold' : 'font-medium'} ${highlight ? 'text-blue-700' : 'text-gray-900'}`}>
+    <div className={`flex justify-between text-sm py-1.5 border-t mt-1 ${strong ? 'font-bold' : 'font-medium'} ${highlight ? 'text-brand' : 'text-gray-900'}`}>
       <span>{name}</span>
       <span className={`tabular-nums ${amount < 0 ? 'text-rose-600' : ''}`}>{formatTWD(amount)}</span>
     </div>

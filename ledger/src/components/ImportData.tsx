@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from 'react'
+import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { buildEntry } from '../core/engine'
 import { composeEntry, suggest } from '../core/suggest'
 import { formatTWD } from '../core/money'
-import { normalizeDate, parseAmount, parseDelimited } from '../lib/csv'
-import type { Account, Category, JournalEntry, QuickInput, Rule } from '../core/types'
+import { parseAmount, normalizeDate } from '../lib/csv'
+import { fileToRows } from '../lib/xlsx'
+import type { Account, Category, JournalEntry, QuickInput } from '../core/types'
 
 type Mode = 'tx' | 'accounts'
 
@@ -22,40 +23,69 @@ export default function ImportData() {
 }
 
 const tab = (active: boolean) =>
-  `px-4 py-2 rounded-lg text-sm font-medium ${active ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600'}`
+  `px-4 py-2 rounded-lg text-sm font-medium ${active ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`
+
+function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setBusy(true); setErr(null)
+    try {
+      const rows = await fileToRows(f)
+      onRows(rows, f.name)
+    } catch (er) {
+      setErr(er instanceof Error ? er.message : '檔案讀取失敗')
+    } finally {
+      setBusy(false)
+      e.target.value = ''
+    }
+  }
+  return (
+    <div>
+      <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-dashed border-brand-light/60 bg-brand-soft text-sm text-brand-dark cursor-pointer hover:bg-brand-soft/70">
+        📄 選擇 Excel / CSV 檔
+        <input type="file" accept=".xlsx,.xls,.csv" onChange={onFile} className="hidden" />
+      </label>
+      {busy && <span className="ml-2 text-xs text-gray-500">讀取中…</span>}
+      {err && <p className="text-sm text-red-600 mt-1">{err}</p>}
+    </div>
+  )
+}
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, rules, addEntriesBulk } = useLedger()
-  const [text, setText] = useState('')
+  const { accounts, addEntriesBulk } = useLedger()
+  const [parsed, setParsed] = useState<ReturnType<typeof mapTxRows> | null>(null)
   const [done, setDone] = useState<string | null>(null)
-
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const cashAccounts = accounts.filter((a) => a.isCash)
 
-  const parsed = useMemo(() => parseTx(text, accounts, rules), [text, accounts, rules])
+  function handle(rows: string[][]) {
+    setDone(null)
+    setParsed(mapTxRows(rows, accounts))
+  }
 
   async function doImport() {
-    if (!parsed.entries.length) return
+    if (!parsed?.entries.length) return
     await addEntriesBulk(parsed.entries)
     setDone(`已匯入 ${parsed.entries.length} 筆交易`)
-    setText('')
+    setParsed(null)
   }
 
   return (
     <div className="space-y-3">
-      <div className="bg-blue-50/60 border border-blue-200 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
-        在 Excel/Google Sheet 選取資料（<b>含標題列</b>）→ 複製 → 貼到下方框內。
-        會自動辨識欄位：<b>付款日期、內容、帳戶、收入、支出</b>（其餘欄位忽略）。
-        有「收入」金額視為收款、有「支出」金額視為付款，科目用學過的規則自動建議。
+      <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
+        直接上傳 Excel/CSV 檔（<b>第一列需為標題</b>）。會自動辨識欄位：
+        <b>付款日期、內容、帳戶、收入、支出</b>。有「收入」金額視為收款、有「支出」視為付款；
+        <code>#N/A</code>/空列自動略過。
       </div>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6}
-        placeholder={'付款日期\t月份\t類別\t內容\t帳戶\t收入\t支出\n2026/01/03\t1月\t收入\t平台收入 KLOOK\t國泰115\t6031\t'}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+      <FileBox onRows={handle} />
 
-      {parsed.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
+      {parsed?.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
 
-      {parsed.entries.length > 0 && (
+      {parsed && parsed.entries.length > 0 && (
         <>
           <div className="text-sm text-gray-600">預覽（共 {parsed.entries.length} 筆，顯示前 {Math.min(10, parsed.entries.length)} 筆）：</div>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -82,13 +112,13 @@ function ImportTx() {
           </div>
           {parsed.unmatchedAccounts.length > 0 && (
             <div className="text-xs text-amber-700">
-              下列「帳戶」在科目表找不到對應現金科目，已暫用「{cashAccounts[0]?.name}」：{parsed.unmatchedAccounts.join('、')}。
-              可先到「設定」新增這些銀行科目再重匯。
+              下列「帳戶」找不到對應現金科目，已暫用「{cashAccounts[0]?.name}」：{parsed.unmatchedAccounts.join('、')}。
             </div>
           )}
-          <button onClick={doImport} className="px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">確認匯入 {parsed.entries.length} 筆</button>
+          <button onClick={doImport} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">確認匯入 {parsed.entries.length} 筆</button>
         </>
       )}
+      {parsed && parsed.entries.length === 0 && !parsed.error && <div className="text-sm text-gray-500">這個檔案沒有可匯入的資料列。</div>}
       {done && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">{done}</div>}
     </div>
   )
@@ -98,13 +128,9 @@ function findCol(headers: string[], ...keys: string[]): number {
   return headers.findIndex((h) => keys.some((k) => h.includes(k)))
 }
 
-function parseTx(text: string, accounts: Account[], rules: Rule[]) {
+function mapTxRows(rows: string[][], accounts: Account[]) {
   const result = { entries: [] as JournalEntry[], unmatchedAccounts: [] as string[], error: null as string | null }
-  const rows = parseDelimited(text)
-  if (rows.length < 2) {
-    if (text.trim()) result.error = '請貼上含標題列的資料（至少兩列）。'
-    return result
-  }
+  if (rows.length < 2) { result.error = '檔案需含標題列與至少一列資料。'; return result }
   const headers = rows[0]
   const cDate = findCol(headers, '付款日期', '日期')
   const cDesc = findCol(headers, '內容', '摘要', '說明')
@@ -113,7 +139,7 @@ function parseTx(text: string, accounts: Account[], rules: Rule[]) {
   const cIn = headers.findIndex((h) => h.trim() === '收入' || (h.includes('收入') && !h.includes('發票')))
   const cOut = headers.findIndex((h) => h.trim() === '支出' || (h.includes('支出') && !h.includes('憑證')))
   if (cDate < 0 || (cIn < 0 && cOut < 0)) {
-    result.error = '找不到「付款日期」或「收入/支出」欄位，請確認有貼到標題列。'
+    result.error = '找不到「付款日期」或「收入/支出」欄位，請確認標題列名稱。'
     return result
   }
 
@@ -126,8 +152,7 @@ function parseTx(text: string, accounts: Account[], rules: Rule[]) {
     const income = cIn >= 0 ? parseAmount(row[cIn] ?? '') : 0
     const expense = cOut >= 0 ? parseAmount(row[cOut] ?? '') : 0
     const amount = income > 0 ? income : expense
-    if (amount <= 0) continue // 跳過空列 / #N/A
-    if (!/\d{4}/.test(dateRaw)) continue
+    if (amount <= 0 || !/\d{4}/.test(dateRaw)) continue
 
     const direction: 'in' | 'out' = income > 0 ? 'in' : 'out'
     const desc = (cDesc >= 0 ? row[cDesc] : '') || (cCat >= 0 ? row[cCat] : '') || '匯入'
@@ -139,14 +164,9 @@ function parseTx(text: string, accounts: Account[], rules: Rule[]) {
       if (hit) cashCode = hit.code
       else unmatched.add(acctText)
     }
-
     const input: QuickInput = { date: normalizeDate(dateRaw), amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
-    const sug = suggest(input, rules, accounts)
-    try {
-      result.entries.push(buildEntry(composeEntry(input, sug.accountCode)))
-    } catch {
-      /* 略過無法建立的列 */
-    }
+    const sug = suggest(input, [], accounts) // 匯入採預設分類，之後可在明細修改
+    try { result.entries.push(buildEntry(composeEntry(input, sug.accountCode))) } catch { /* skip */ }
   }
   result.unmatchedAccounts = [...unmatched]
   return result
@@ -155,27 +175,26 @@ function parseTx(text: string, accounts: Account[], rules: Rule[]) {
 // ── 匯入會計科目（編號 / 科目）────────────────────────────────────────────────
 function ImportAccounts() {
   const { addAccountsBulk } = useLedger()
-  const [text, setText] = useState('')
+  const [parsed, setParsed] = useState<Account[] | null>(null)
   const [done, setDone] = useState<string | null>(null)
-  const parsed = useMemo(() => parseAccounts(text), [text])
+
+  function handle(rows: string[][]) { setDone(null); setParsed(mapAccountRows(rows)) }
 
   async function doImport() {
-    if (!parsed.length) return
+    if (!parsed?.length) return
     await addAccountsBulk(parsed)
     setDone(`已匯入/更新 ${parsed.length} 個科目`)
-    setText('')
+    setParsed(null)
   }
 
   return (
     <div className="space-y-3">
-      <div className="bg-blue-50/60 border border-blue-200 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
-        貼上你的會計分類（含「編號」「科目」兩欄）。系統會依<b>編號開頭數字</b>自動判斷類別：
-        1=資產、2=負債、3=權益、4=收入、5/6/7=費用；名稱含「現金/銀行/存款」標記為現金科目，「應收/應付」標記為需沖銷。匯入後可在「設定」微調。
+      <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
+        上傳含「編號」「科目」兩欄的 Excel/CSV。系統依<b>編號開頭數字</b>自動判類別：
+        1=資產、2=負債、3=權益、4=收入、5/6/7=費用；名稱含「現金/銀行/存款」標記為現金、「應收/應付」標記為需沖銷。匯入後可在「設定」微調。
       </div>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6}
-        placeholder={'編號\t科目\n1102\t銀行存款\n4101\t營業收入\n6103\t油料費'}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-      {parsed.length > 0 && (
+      <FileBox onRows={handle} />
+      {parsed && parsed.length > 0 && (
         <>
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-h-64 overflow-y-auto">
             <table className="w-full text-sm">
@@ -191,9 +210,10 @@ function ImportAccounts() {
               </tbody>
             </table>
           </div>
-          <button onClick={doImport} className="px-5 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">確認匯入 {parsed.length} 個科目</button>
+          <button onClick={doImport} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">確認匯入 {parsed.length} 個科目</button>
         </>
       )}
+      {parsed && parsed.length === 0 && <div className="text-sm text-gray-500">沒有解析到科目，請確認檔案有「編號、科目」兩欄。</div>}
       {done && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">{done}</div>}
     </div>
   )
@@ -207,22 +227,18 @@ function categoryFromCode(code: string): Category {
     case '2': return 'liability'
     case '3': return 'equity'
     case '4': return 'revenue'
-    default: return 'expense' // 5/6/7...
+    default: return 'expense'
   }
 }
 
-function parseAccounts(text: string): Account[] {
-  const rows = parseDelimited(text)
+function mapAccountRows(rows: string[][]): Account[] {
   if (!rows.length) return []
-  // 略過標題列
   const data = /編號|科目|代號|名稱/.test(rows[0].join('')) ? rows.slice(1) : rows
   const out: Account[] = []
   const seen = new Set<string>()
   for (const row of data) {
     if (row.length < 2) continue
-    // 編號 = 數字較多的那欄
-    let code = row[0]
-    let name = row[1]
+    let code = row[0]; let name = row[1]
     if (!/^\d/.test(code) && /^\d/.test(name)) { code = row[1]; name = row[0] }
     code = code.trim(); name = name.trim()
     if (!code || !name || seen.has(code)) continue
