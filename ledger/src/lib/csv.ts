@@ -61,19 +61,21 @@ export function parseAmount(s: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** 正規化日期成 YYYY-MM-DD；無法辨識時回傳空字串。 */
+/** 正規化日期成 YYYY-MM-DD；無法辨識時回傳空字串。
+ *  支援年在前：2026/01/06、2026-1-6、26/01/06(Tue) 等（可含星期等尾綴）。 */
 export function normalizeDate(s: string): string {
   const t = String(s).trim()
   if (!t) return ''
-  // 已是 ISO 或 yyyy/m/d
-  let m = t.match(/(\d{4})[/.\-](\d{1,2})[/.\-](\d{1,2})/)
-  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
-  // m/d/yyyy 或 m/d/yy（美式）
-  m = t.match(/(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})/)
+  // 年在前：yyyy 或 yy，後接 月 / 日，容許後方有 (Tue) 之類尾綴
+  const m = t.match(/(\d{2,4})[/.\-](\d{1,2})[/.\-](\d{1,2})/)
   if (m) {
-    let y = m[3]
-    if (y.length === 2) y = (Number(y) >= 70 ? '19' : '20') + y
-    return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+    let y = m[1]
+    if (y.length <= 2) y = (Number(y) >= 70 ? '19' : '20') + y.padStart(2, '0')
+    const mo = Number(m[2])
+    const d = Number(m[3])
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
   }
   // Excel 序列日期（純數字，1900 起算）
   if (/^\d{4,5}(\.\d+)?$/.test(t)) {
