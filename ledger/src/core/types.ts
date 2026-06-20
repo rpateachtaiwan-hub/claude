@@ -39,6 +39,12 @@ export interface JournalEntry {
   settled?: boolean
   /** 若此筆為「沖銷（收/付款）」分錄，指向被沖銷的應計傳票 id */
   settles?: string
+  /** 對方帳號（銀行匯入用） */
+  counterpartyAccount?: string
+  /** 交易分行（銀行匯入用） */
+  branch?: string
+  /** 無法辨識科目、待人工/AI 補分類 */
+  needsReview?: boolean
   createdAt?: string
 }
 

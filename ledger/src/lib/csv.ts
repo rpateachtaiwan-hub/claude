@@ -66,6 +66,9 @@ export function parseAmount(s: string): number {
 export function normalizeDate(s: string): string {
   const t = String(s).trim()
   if (!t) return ''
+  // 8 碼緊湊格式 yyyymmdd（如銀行下載 20260601）
+  const c = t.match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (c && +c[2] >= 1 && +c[2] <= 12 && +c[3] >= 1 && +c[3] <= 31) return `${c[1]}-${c[2]}-${c[3]}`
   // 年在前：yyyy 或 yy，後接 月 / 日，容許後方有 (Tue) 之類尾綴
   const m = t.match(/(\d{2,4})[/.\-](\d{1,2})[/.\-](\d{1,2})/)
   if (m) {

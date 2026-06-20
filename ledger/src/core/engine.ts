@@ -50,6 +50,9 @@ export function buildEntry(input: {
   lines: EntryLine[]
   settled?: boolean
   settles?: string
+  counterpartyAccount?: string
+  branch?: string
+  needsReview?: boolean
   id?: string
 }): JournalEntry {
   assertBalanced(input.lines)
@@ -62,6 +65,9 @@ export function buildEntry(input: {
     lines: input.lines,
     settled: input.settled,
     settles: input.settles,
+    counterpartyAccount: input.counterpartyAccount,
+    branch: input.branch,
+    needsReview: input.needsReview,
     createdAt: new Date().toISOString(),
   }
 }

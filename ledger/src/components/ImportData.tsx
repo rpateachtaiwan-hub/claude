@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { buildEntry } from '../core/engine'
-import { composeEntry, suggest } from '../core/suggest'
+import { composeEntry } from '../core/suggest'
+import { PLACEHOLDER_ACCOUNTS, UNCLASSIFIED_IN, UNCLASSIFIED_OUT } from '../core/accounts'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
 import { fileToRows } from '../lib/xlsx'
@@ -56,7 +57,7 @@ function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void 
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, addEntriesBulk } = useLedger()
+  const { accounts, addEntriesBulk, addAccountsBulk } = useLedger()
   const [parsed, setParsed] = useState<ReturnType<typeof mapTxRows> | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
@@ -69,17 +70,18 @@ function ImportTx() {
 
   async function doImport() {
     if (!parsed?.entries.length) return
+    await addAccountsBulk(PLACEHOLDER_ACCOUNTS) // 確保「待分類」科目存在
     await addEntriesBulk(parsed.entries)
-    setDone(`已匯入 ${parsed.entries.length} 筆交易`)
+    setDone(`已匯入 ${parsed.entries.length} 筆交易${parsed.needsReviewCount ? `，其中 ${parsed.needsReviewCount} 筆待分類（請到「明細」補上科目）` : ''}`)
     setParsed(null)
   }
 
   return (
     <div className="space-y-3">
       <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
-        直接上傳 Excel/CSV 檔（<b>第一列需為標題</b>）。會自動辨識欄位：
-        <b>付款日期、內容、帳戶、收入、支出</b>。有「收入」金額視為收款、有「支出」視為付款；
-        <code>#N/A</code>/空列自動略過。
+        直接上傳 Excel/CSV 檔（<b>第一列需為標題</b>）。自動辨識欄位（含銀行下載格式）：
+        <b>帳務/付款日期、備註/內容、提出/支出、存入/收入、對方帳號、交易分行</b>。
+        無法判定科目的交易會先列為<b>「待分類」</b>並在「明細」標示提醒，供你（或 Gemini）補上。
       </div>
       <FileBox onRows={handle} />
 
@@ -88,6 +90,7 @@ function ImportTx() {
       {parsed && (parsed.totalRows > 0 || parsed.entries.length > 0) && (
         <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
           讀到 <b>{parsed.totalRows}</b> 列 · 可匯入 <b className="text-brand">{parsed.entries.length}</b> 筆
+          {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 待分類 {parsed.needsReviewCount} 筆</span>}
           {parsed.skippedNoAmount > 0 && <span> · 略過無金額 {parsed.skippedNoAmount} 列</span>}
           {parsed.skippedNoDate > 0 && <span className="text-amber-600"> · 略過日期無法辨識 {parsed.skippedNoDate} 列</span>}
         </div>
@@ -139,18 +142,20 @@ function findCol(headers: string[], ...keys: string[]): number {
 function mapTxRows(rows: string[][], accounts: Account[]) {
   const result = {
     entries: [] as JournalEntry[], unmatchedAccounts: [] as string[],
-    error: null as string | null, totalRows: 0, skippedNoAmount: 0, skippedNoDate: 0,
+    error: null as string | null, totalRows: 0, skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0,
   }
   if (rows.length < 2) { result.error = '檔案需含標題列與至少一列資料。'; return result }
   const headers = rows[0]
-  const cDate = findCol(headers, '付款日期', '日期')
-  const cDesc = findCol(headers, '內容', '摘要', '說明')
+  const cDate = findCol(headers, '帳務日期', '付款日期', '日期')
+  const cDesc = findCol(headers, '備註', '內容', '摘要', '說明')
   const cCat = findCol(headers, '類別')
   const cAcct = findCol(headers, '帳戶')
-  const cIn = headers.findIndex((h) => h.trim() === '收入' || (h.includes('收入') && !h.includes('發票')))
-  const cOut = headers.findIndex((h) => h.trim() === '支出' || (h.includes('支出') && !h.includes('憑證')))
+  const cCpAcct = findCol(headers, '對方帳號')
+  const cBranch = findCol(headers, '交易分行', '分行')
+  const cIn = headers.findIndex((h) => ['存入金額', '收入'].includes(h.trim()) || h.includes('存入') || (h.includes('收入') && !h.includes('發票')))
+  const cOut = headers.findIndex((h) => ['提出金額', '支出'].includes(h.trim()) || h.includes('提出') || (h.includes('支出') && !h.includes('憑證')))
   if (cDate < 0 || (cIn < 0 && cOut < 0)) {
-    result.error = '找不到「付款日期」或「收入/支出」欄位，請確認標題列名稱。'
+    result.error = '找不到日期或收入/支出欄位，請確認標題列名稱。'
     return result
   }
 
@@ -160,7 +165,6 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
   let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
 
   for (const row of rows.slice(1)) {
-    // 整列皆空則略過（不計入統計）
     if (row.every((c) => !c || !c.trim())) continue
     result.totalRows++
 
@@ -175,8 +179,10 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
     if (!date) { result.skippedNoDate++; continue }
 
     const direction: 'in' | 'out' = income > 0 ? 'in' : 'out'
-    const desc = (cDesc >= 0 ? row[cDesc] : '') || (cCat >= 0 ? row[cCat] : '') || '匯入'
-    const counterparty = cCat >= 0 ? row[cCat] : undefined
+    const desc = (cDesc >= 0 ? row[cDesc] : '') || (cCat >= 0 ? row[cCat] : '') || '（無備註）'
+    const counterparty = cCat >= 0 ? row[cCat] || undefined : undefined
+    const counterpartyAccount = cCpAcct >= 0 ? row[cCpAcct] || undefined : undefined
+    const branch = cBranch >= 0 ? row[cBranch] || undefined : undefined
     const acctText = cAcct >= 0 ? row[cAcct] : ''
     let cashCode = defaultCash
     if (acctText) {
@@ -184,9 +190,15 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
       if (hit) cashCode = hit.code
       else unmatched.add(acctText)
     }
+
+    // 無法辨識科目 → 列為「待分類」並標記 needsReview，供人工/AI 補分類
+    const categoryCode = direction === 'in' ? UNCLASSIFIED_IN : UNCLASSIFIED_OUT
+    result.needsReviewCount++
+
     const input: QuickInput = { date, amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
-    const sug = suggest(input, [], accounts) // 匯入採預設分類，之後可在明細修改
-    try { result.entries.push(buildEntry(composeEntry(input, sug.accountCode))) } catch { /* skip */ }
+    try {
+      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode), counterpartyAccount, branch, needsReview: true }))
+    } catch { /* skip */ }
   }
   result.unmatchedAccounts = [...unmatched]
   return result

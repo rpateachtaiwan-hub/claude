@@ -29,7 +29,14 @@ export const DEFAULT_ACCOUNTS: Account[] = [
   { code: '6105', name: '銀行手續費', category: 'expense', normalBalance: 'debit' },
   { code: '6106', name: '廣告行銷費', category: 'expense', normalBalance: 'debit' },
   { code: '6199', name: '雜費', category: 'expense', normalBalance: 'debit' },
+  // 待分類（匯入時無法辨識科目者暫列於此，請於明細補上正確科目）
+  { code: '4999', name: '待分類收入', category: 'revenue', normalBalance: 'credit' },
+  { code: '6999', name: '待分類支出', category: 'expense', normalBalance: 'debit' },
 ]
+
+export const UNCLASSIFIED_IN = '4999'
+export const UNCLASSIFIED_OUT = '6999'
+export const PLACEHOLDER_ACCOUNTS: Account[] = DEFAULT_ACCOUNTS.filter((a) => a.code === '4999' || a.code === '6999')
 
 export const DEFAULT_CASH_ACCOUNT = '1102' // 銀行存款
 export const AR_ACCOUNT = '1141'
