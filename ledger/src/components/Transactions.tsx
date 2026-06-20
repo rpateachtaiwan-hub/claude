@@ -196,7 +196,7 @@ export default function Transactions() {
                       </div>
                     )}
                   </td>
-                  <td className="px-3 py-2.5 text-xs text-gray-600">借 {accName(dr.accountCode)}<br />貸 {accName(cr.accountCode)}</td>
+                  <td className="px-3 py-2.5"><CategoryCell e={e} /></td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-medium">{formatTWD(dr.debit)}</td>
                   <td className="px-3 py-2.5 text-center whitespace-nowrap">
                     <button onClick={() => setEditing(e)} className="text-gray-400 hover:text-brand mr-2" title="編輯">✎</button>
@@ -212,6 +212,43 @@ export default function Transactions() {
       {editing && <EditModal entry={editing} onClose={() => setEditing(null)} />}
     </div>
   )
+}
+
+// 明細列內嵌：直接修改分類科目（非現金腳），改完立即儲存
+function CategoryCell({ e }: { e: JournalEntry }) {
+  const { accounts, updateEntry } = useLedger()
+  const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
+  const dr = e.lines.find((l) => l.debit > 0)!
+  const cr = e.lines.find((l) => l.credit > 0)!
+
+  if (e.source === 'settlement') {
+    return <div className="text-xs text-gray-600">借 {accName(dr.accountCode)}<br />貸 {accName(cr.accountCode)}</div>
+  }
+
+  const byCode = new Map(accounts.map((a) => [a.code, a]))
+  const categoryAccounts = accounts.filter((a) => !a.isCash)
+  const settleLeg = e.lines.find((l) => byCode.get(l.accountCode)?.isCash || byCode.get(l.accountCode)?.isOpenItem) ?? e.lines[0]
+  const catLeg = e.lines.find((l) => l !== settleLeg) ?? e.lines[1]
+  const dir: 'in' | 'out' = settleLeg.debit > 0 ? 'in' : 'out'
+
+  async function change(code: string) {
+    const input = entryToInput(e, accounts)
+    await updateEntry(buildEntry({
+      ...composeEntry(input, code, accounts), id: e.id, company: e.company,
+      counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false,
+    }))
+  }
+
+  const sel = (
+    <select value={catLeg.accountCode} onChange={(ev) => change(ev.target.value)}
+      className={`border rounded px-1 py-0.5 text-xs max-w-[160px] focus:outline-none focus:ring-1 focus:ring-brand ${e.needsReview ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`}>
+      {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+    </select>
+  )
+
+  return dir === 'out'
+    ? <div className="space-y-0.5 text-xs text-gray-600"><div className="flex items-center gap-1">借 {sel}</div><div>貸 {accName(settleLeg.accountCode)}</div></div>
+    : <div className="space-y-0.5 text-xs text-gray-600"><div>借 {accName(settleLeg.accountCode)}</div><div className="flex items-center gap-1">貸 {sel}</div></div>
 }
 
 function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => void }) {
