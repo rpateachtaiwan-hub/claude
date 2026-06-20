@@ -53,6 +53,7 @@ export function buildEntry(input: {
   counterpartyAccount?: string
   branch?: string
   voucherNo?: string
+  company?: string
   needsReview?: boolean
   id?: string
 }): JournalEntry {
@@ -62,6 +63,7 @@ export function buildEntry(input: {
     date: input.date,
     description: input.description,
     counterparty: input.counterparty,
+    company: input.company,
     source: input.source,
     lines: input.lines,
     settled: input.settled,

@@ -6,7 +6,7 @@ import { formatTWD } from '../core/money'
 import type { QuickInput } from '../core/types'
 
 export default function QuickEntry() {
-  const { accounts, preview, commit, aiConfig } = useLedger()
+  const { accounts, companies, preview, commit, aiConfig } = useLedger()
   const today = new Date().toISOString().slice(0, 10)
 
   const [date, setDate] = useState(today)
@@ -14,8 +14,14 @@ export default function QuickEntry() {
   const [amount, setAmount] = useState(0)
   const [description, setDescription] = useState('')
   const [counterparty, setCounterparty] = useState('')
+  const [company, setCompany] = useState(() => localStorage.getItem('ql-last-company') || '')
   const [cashAccountCode, setCashAccountCode] = useState('1102')
   const [accrual, setAccrual] = useState(false)
+
+  // 公司清單載入後，若尚未選擇則預設第一間
+  useEffect(() => {
+    if (!company && companies.length) setCompany(companies[0])
+  }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
   const [override, setOverride] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [ai, setAi] = useState<{ accountCode: string; reason: string } | null>(null)
@@ -26,8 +32,8 @@ export default function QuickEntry() {
   const categoryAccounts = accounts.filter((a) => !a.isCash && !a.isOpenItem)
 
   const input: QuickInput = useMemo(
-    () => ({ date, amount, description, counterparty: counterparty || undefined, direction, cashAccountCode, accrual }),
-    [date, amount, description, counterparty, direction, cashAccountCode, accrual],
+    () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, direction, cashAccountCode, accrual }),
+    [date, amount, description, counterparty, company, direction, cashAccountCode, accrual],
   )
 
   const fallback = useMemo(() => (amount > 0 ? preview(input) : null), [input, amount, preview])
@@ -62,6 +68,7 @@ export default function QuickEntry() {
   async function onSubmit() {
     if (amount <= 0 || !description || !chosen) return
     await commit(input, chosen)
+    if (company) localStorage.setItem('ql-last-company', company)
     setToast(`已記一筆：${direction === 'in' ? '收入' : '支出'} ${formatTWD(amount)} → ${accName(chosen)}`)
     setAmount(0); setDescription(''); setCounterparty(''); setOverride(null); setAi(null)
     setTimeout(() => setToast(null), 4000)
@@ -78,6 +85,15 @@ export default function QuickEntry() {
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="公司" wide>
+            {companies.length ? (
+              <select value={company} onChange={(e) => setCompany(e.target.value)} className={inp}>
+                {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            ) : (
+              <p className="text-xs text-amber-600">尚未建立公司，請先到「設定 → 公司」新增。</p>
+            )}
+          </Field>
           <Field label="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp} /></Field>
           <Field label="金額">
             <input type="number" value={amount || ''} min={0} placeholder="0" autoFocus

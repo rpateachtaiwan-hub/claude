@@ -57,22 +57,28 @@ function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void 
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, addEntriesBulk, addAccountsBulk } = useLedger()
+  const { accounts, companies, addEntriesBulk, addAccountsBulk } = useLedger()
   const [parsed, setParsed] = useState<ReturnType<typeof mapTxRows> | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  const [company, setCompany] = useState('')
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const cashAccounts = accounts.filter((a) => a.isCash)
+
+  React.useEffect(() => { if (!company && companies.length) setCompany(companies[0]) }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handle(rows: string[][]) {
     setDone(null)
     setParsed(mapTxRows(rows, accounts))
   }
 
+  const needCompany = companies.length > 0 && !company
+
   async function doImport() {
-    if (!parsed?.entries.length) return
+    if (!parsed?.entries.length || needCompany) return
     await addAccountsBulk(PLACEHOLDER_ACCOUNTS) // 確保「待分類」科目存在
-    await addEntriesBulk(parsed.entries)
-    setDone(`已匯入 ${parsed.entries.length} 筆交易${parsed.needsReviewCount ? `，其中 ${parsed.needsReviewCount} 筆待分類（請到「明細」補上科目）` : ''}`)
+    const entries = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
+    await addEntriesBulk(entries)
+    setDone(`已匯入 ${entries.length} 筆交易${company ? `（公司：${company}）` : ''}${parsed.needsReviewCount ? `，其中 ${parsed.needsReviewCount} 筆待分類（請到「明細」補上科目）` : ''}`)
     setParsed(null)
   }
 
@@ -83,6 +89,18 @@ function ImportTx() {
         <b>帳務/付款日期、備註/內容、提出/支出、存入/收入、對方帳號、交易分行</b>。
         無法判定科目的交易會先列為<b>「待分類」</b>並在「明細」標示提醒，供你（或 Gemini）補上。
       </div>
+
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">這份檔案屬於哪間公司？</label>
+        {companies.length ? (
+          <select value={company} onChange={(e) => setCompany(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand">
+            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        ) : (
+          <p className="text-xs text-amber-600">尚未建立公司，請先到「設定 → 公司」新增；未選公司也可匯入，但建議先建立。</p>
+        )}
+      </div>
+
       <FileBox onRows={handle} />
 
       {parsed?.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
@@ -126,7 +144,9 @@ function ImportTx() {
               下列「帳戶」找不到對應現金科目，已暫用「{cashAccounts[0]?.name}」：{parsed.unmatchedAccounts.join('、')}。
             </div>
           )}
-          <button onClick={doImport} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">確認匯入 {parsed.entries.length} 筆</button>
+          <button onClick={doImport} disabled={needCompany} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
+            確認匯入 {parsed.entries.length} 筆{company ? `到「${company}」` : ''}
+          </button>
         </>
       )}
       {parsed && parsed.entries.length === 0 && !parsed.error && <div className="text-sm text-gray-500">這個檔案沒有可匯入的資料列。</div>}

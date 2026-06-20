@@ -8,18 +8,24 @@ type Tab = 'pnl' | 'bs' | 'cf'
 type Gran = 'all' | 'year' | 'month'
 
 export default function Reports() {
-  const { entries, accounts } = useLedger()
+  const { entries: allEntries, accounts, companies } = useLedger()
   const [tab, setTab] = useState<Tab>('pnl')
   const [gran, setGran] = useState<Gran>('all')
   const [period, setPeriod] = useState('')
   const [zoom, setZoom] = useState(1)
+  const [companyFilter, setCompanyFilter] = useState('')
+
+  const entries = useMemo(
+    () => (companyFilter ? allEntries.filter((e) => e.company === companyFilter) : allEntries),
+    [allEntries, companyFilter],
+  )
 
   const { years, months } = useMemo(() => {
     const ys = new Set<string>(); const ms = new Set<string>()
-    for (const e of entries) { ys.add(e.date.slice(0, 4)); ms.add(e.date.slice(0, 7)) }
+    for (const e of allEntries) { ys.add(e.date.slice(0, 4)); ms.add(e.date.slice(0, 7)) }
     ys.add(String(new Date().getFullYear())) // 永遠可選當年
     return { years: [...ys].sort().reverse(), months: [...ms].sort().reverse() }
-  }, [entries])
+  }, [allEntries])
 
   const { range, asOf, label } = useMemo(() => {
     if (gran === 'year' && period) return { range: { from: `${period}-01-01`, to: `${period}-12-31` }, asOf: `${period}-12-31`, label: `${period} 年` }
@@ -89,6 +95,13 @@ export default function Reports() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
+        {companies.length > 0 && (
+          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}
+            className="border border-gray-300 rounded px-2 py-1.5 font-medium">
+            <option value="">全部公司（合併）</option>
+            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
         {([['all', '全部'], ['year', '依年'], ['month', '依月']] as [Gran, string][]).map(([g, l]) => (
           <button key={g} onClick={() => { setGran(g); setPeriod(g === 'year' ? years[0] ?? '' : g === 'month' ? months[0] ?? '' : '') }}
             className={`px-3 py-1.5 rounded-lg text-sm ${gran === g ? 'bg-gray-800 text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>{l}</button>
@@ -116,9 +129,9 @@ export default function Reports() {
       <div style={{ ['zoom' as keyof React.CSSProperties]: zoom } as React.CSSProperties}>
         {tab === 'pnl' && !matrix && (
           <Card title="損益表" subtitle={label}>
-            <Section label="收入">{pnl.rows.filter((r) => r.category === 'revenue').map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="收入">{pnl.rows.filter((r) => r.category === 'revenue').map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="收入合計" amount={pnl.revenue} />
-            <Section label="費用 / 成本">{pnl.rows.filter((r) => r.category === 'expense').map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="費用 / 成本">{pnl.rows.filter((r) => r.category === 'expense').map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="費用合計" amount={pnl.expense} />
             <Total name="本期淨利" amount={pnl.netIncome} strong highlight />
           </Card>
@@ -128,11 +141,11 @@ export default function Reports() {
 
         {tab === 'bs' && (
           <Card title="資產負債表" subtitle={asOf ? `截至 ${asOf}` : '截至目前'}>
-            <Section label="資產">{bs.assets.map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="資產">{bs.assets.map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="資產總計" amount={bs.totalAssets} strong />
-            <Section label="負債">{bs.liabilities.map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="負債">{bs.liabilities.map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="負債合計" amount={bs.totalLiabilities} />
-            <Section label="權益">{bs.equity.map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="權益">{bs.equity.map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="權益合計" amount={bs.totalEquity} />
             <Total name="負債 + 權益" amount={bs.totalLiabilities + bs.totalEquity} strong highlight={bs.balanced} />
             {!bs.balanced && <p className="text-xs text-red-600 mt-1">⚠ 資產與負債+權益不相等，請檢查資料。</p>}
@@ -141,11 +154,11 @@ export default function Reports() {
 
         {tab === 'cf' && (
           <Card title="現金流量表（直接法）" subtitle={label}>
-            <Section label="營業活動">{cf.operating.map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="營業活動">{cf.operating.map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="營業活動現金流" amount={cf.operatingTotal} />
-            <Section label="投資活動">{cf.investing.map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="投資活動">{cf.investing.map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="投資活動現金流" amount={cf.investingTotal} />
-            <Section label="理財活動">{cf.financing.map((r) => <Row key={r.code} name={r.name} amount={r.amount} />)}</Section>
+            <Section label="理財活動">{cf.financing.map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
             <Total name="理財活動現金流" amount={cf.financingTotal} />
             <Total name="本期現金淨變動" amount={cf.netChange} strong />
             <Total name="期末現金餘額" amount={cf.endingCash} strong highlight />
@@ -263,9 +276,9 @@ function Section({ label, children }: { label: string; children: React.ReactNode
     </div>
   )
 }
-function Row({ name, amount }: { name: string; amount: number }) {
+function Row({ name, amount, zebra }: { name: string; amount: number; zebra?: boolean }) {
   return (
-    <div className="flex justify-between text-sm py-2 border-b border-gray-50">
+    <div className={`flex justify-between text-sm py-2 px-2 -mx-2 rounded ${zebra ? 'bg-brand-soft/50' : ''}`}>
       <span className="text-gray-700">{name}</span>
       <span className={`tabular-nums ${amount < 0 ? 'text-rose-600' : 'text-gray-800'}`}>{formatTWD(amount)}</span>
     </div>

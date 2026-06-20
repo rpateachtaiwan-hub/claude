@@ -13,6 +13,7 @@ export interface OpenItem {
   date: string
   description: string
   counterparty?: string
+  company?: string
   amount: number // 原始掛帳金額
   settled: number // 已沖金額
   remaining: number
@@ -46,7 +47,7 @@ export function openItems(entries: JournalEntry[], accounts: Account[]): OpenIte
     if (remaining <= 0) continue
     items.push({
       id: e.id, type, controlCode: control.accountCode, date: e.date,
-      description: e.description, counterparty: e.counterparty, amount, settled, remaining,
+      description: e.description, counterparty: e.counterparty, company: e.company, amount, settled, remaining,
     })
   }
   return items
@@ -75,6 +76,7 @@ export function buildSettlement(
     date: opts.date,
     description: `${isAR ? '收款沖銷' : '付款沖銷'}：${item.description}`,
     counterparty: item.counterparty,
+    company: item.company,
     source: 'settlement',
     lines,
     settles: item.id,

@@ -33,6 +33,8 @@ export interface JournalEntry {
   date: string // YYYY-MM-DD
   description: string
   counterparty?: string
+  /** 所屬公司（多公司帳務用） */
+  company?: string
   source: EntrySource
   lines: EntryLine[]
   /** 若此筆為應計（產生應收/應付），記錄是否已收/付清（沖銷後為 true） */
@@ -58,6 +60,8 @@ export interface QuickInput {
   amount: number
   description: string
   counterparty?: string
+  /** 所屬公司 */
+  company?: string
   /** 錢的方向：收入帳(in) / 支出(out) */
   direction: 'in' | 'out'
   /** 使用的現金/銀行科目 code（現金基礎時）；應計時可省略 */

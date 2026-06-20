@@ -60,6 +60,7 @@ export function composeEntry(
     date: input.date,
     description: input.description,
     counterparty: input.counterparty,
+    company: input.company,
     source: input.accrual ? 'accrual' : 'cash',
     lines,
     settled: input.accrual ? false : true,

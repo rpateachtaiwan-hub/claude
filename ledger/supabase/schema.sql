@@ -20,11 +20,15 @@ create table if not exists entries (
 );
 create index if not exists idx_entries_date on entries (date);
 
+create table if not exists companies (
+  name text primary key
+);
+
 -- ── Row Level Security：已登入者可讀寫，未登入一律拒絕 ───────────────────────
 do $$
 declare t text;
 begin
-  foreach t in array array['accounts','rules','entries']
+  foreach t in array array['accounts','rules','entries','companies']
   loop
     execute format('alter table %I enable row level security', t);
     execute format('drop policy if exists app_authenticated_all on %I', t);

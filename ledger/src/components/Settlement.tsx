@@ -3,11 +3,12 @@ import { useLedger } from '../store/useLedger'
 import { formatTWD } from '../core/money'
 
 export default function Settlement() {
-  const { openItems, accounts, settle } = useLedger()
+  const { openItems, accounts, settle, companies } = useLedger()
   const [type, setType] = useState<'AP' | 'AR'>('AP')
+  const [companyFilter, setCompanyFilter] = useState('')
   const today = new Date().toISOString().slice(0, 10)
   const cashAccounts = accounts.filter((a) => a.isCash)
-  const items = openItems().filter((i) => i.type === type)
+  const items = openItems().filter((i) => i.type === type && (!companyFilter || i.company === companyFilter))
   const [draft, setDraft] = useState<Record<string, { amount: number; cash: string; date: string }>>({})
   const [err, setErr] = useState<string | null>(null)
 
@@ -28,13 +29,20 @@ export default function Settlement() {
 
   return (
     <div className="w-full p-4 sm:p-6 space-y-4">
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2 items-center">
         {(['AP', 'AR'] as const).map((t) => (
           <button key={t} onClick={() => setType(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium ${type === t ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
             {t === 'AP' ? '應付（付款沖銷）' : '應收（收款沖銷）'}
           </button>
         ))}
+        {companies.length > 0 && (
+          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}
+            className="ml-auto border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand">
+            <option value="">全部公司</option>
+            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
       </div>
 
       {err && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">{err}</div>}
@@ -58,7 +66,7 @@ export default function Settlement() {
               return (
                 <tr key={it.id} className="border-t border-gray-100 align-middle">
                   <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{it.date}</td>
-                  <td className="px-3 py-2.5 text-gray-800">{it.description}{it.counterparty && <span className="text-gray-400 text-xs"> · {it.counterparty}</span>}</td>
+                  <td className="px-3 py-2.5 text-gray-800">{it.company && <span className="mr-1 text-[10px] text-brand bg-brand-soft rounded px-1.5 py-0.5">{it.company}</span>}{it.description}{it.counterparty && <span className="text-gray-400 text-xs"> · {it.counterparty}</span>}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{formatTWD(it.amount)}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-medium">{formatTWD(it.remaining)}</td>
                   <td className="px-3 py-2.5">

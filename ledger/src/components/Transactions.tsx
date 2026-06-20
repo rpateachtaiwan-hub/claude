@@ -22,12 +22,13 @@ function entryToInput(e: JournalEntry, accounts: Account[]): QuickInput {
 }
 
 export default function Transactions() {
-  const { entries, accounts, deleteEntry, updateEntry, aiConfig } = useLedger()
+  const { entries, accounts, deleteEntry, updateEntry, aiConfig, companies } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [asc, setAsc] = useState(false)
   const [onlyReview, setOnlyReview] = useState(false)
+  const [companyFilter, setCompanyFilter] = useState('')
   const [editing, setEditing] = useState<JournalEntry | null>(null)
   const [aiBusy, setAiBusy] = useState<string | null>(null)
 
@@ -38,9 +39,10 @@ export default function Transactions() {
     const amountOf = (e: JournalEntry) => e.lines.find((l) => l.debit > 0)?.debit ?? 0
     const filtered = entries.filter((e) => {
       if (onlyReview && !e.needsReview) return false
+      if (companyFilter && e.company !== companyFilter) return false
       if (!kw) return true
       const dr = e.lines.find((l) => l.debit > 0); const cr = e.lines.find((l) => l.credit > 0)
-      const hay = [e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', accName(dr?.accountCode ?? ''), accName(cr?.accountCode ?? ''), String(amountOf(e))].join(' ').toLowerCase()
+      const hay = [e.date, e.description, e.counterparty ?? '', e.company ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', accName(dr?.accountCode ?? ''), accName(cr?.accountCode ?? ''), String(amountOf(e))].join(' ').toLowerCase()
       return hay.includes(kw)
     })
     return [...filtered].sort((a, b) => {
@@ -50,7 +52,7 @@ export default function Transactions() {
       else r = amountOf(a) - amountOf(b)
       return asc ? r : -r
     })
-  }, [entries, q, sortKey, asc, onlyReview]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, q, sortKey, asc, onlyReview, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setAsc(!asc)
@@ -61,11 +63,11 @@ export default function Transactions() {
   function exportCsv() {
     const data = rows.map((e) => {
       const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
-      return [e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '',
+      return [e.company ?? '', e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '',
         accName(dr.accountCode), accName(cr.accountCode), dr.debit,
         e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金', e.needsReview ? '待分類' : '']
     })
-    downloadCSV('交易明細', toCSV(['日期', '摘要', '對象', '對方帳號', '交易分行', '憑證編號', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
+    downloadCSV('交易明細', toCSV(['公司', '日期', '摘要', '對象', '對方帳號', '交易分行', '憑證編號', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
   }
 
   async function classifyWithAi() {
@@ -90,8 +92,15 @@ export default function Transactions() {
   return (
     <div className="w-full p-4 sm:p-6 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋摘要 / 對象 / 對方帳號 / 分行 / 科目 / 金額…"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋摘要 / 對象 / 公司 / 科目 / 金額…"
           className="flex-1 min-w-[180px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
+        {companies.length > 0 && (
+          <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}
+            className="border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand">
+            <option value="">全部公司</option>
+            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
         {reviewCount > 0 && (
           <button onClick={() => setOnlyReview((v) => !v)}
             className={`px-3 py-2 rounded-lg text-sm whitespace-nowrap ${onlyReview ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
@@ -127,6 +136,7 @@ export default function Transactions() {
                   <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{e.date}</td>
                   <td className="px-3 py-2.5 text-gray-800">
                     {e.needsReview && <span className="mr-1 text-[10px] text-amber-700 bg-amber-100 rounded px-1 py-0.5 font-medium">⚠ 待分類</span>}
+                    {e.company && <span className="mr-1 text-[10px] text-brand bg-brand-soft rounded px-1.5 py-0.5">{e.company}</span>}
                     {e.description}
                     {e.counterparty && <span className="text-gray-400 text-xs"> · {e.counterparty}</span>}
                     {e.source === 'accrual' && <span className="ml-1 text-[10px] text-amber-600 bg-amber-50 rounded px-1">應計</span>}
@@ -158,7 +168,7 @@ export default function Transactions() {
 }
 
 function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => void }) {
-  const { accounts, updateEntry } = useLedger()
+  const { accounts, updateEntry, companies } = useLedger()
   const accByCode = new Map(accounts.map((a) => [a.code, a]))
   const cashAccounts = accounts.filter((a) => a.isCash)
   const categoryAccounts = accounts.filter((a) => !a.isCash && !a.isOpenItem)
@@ -175,6 +185,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
   const [amount, setAmount] = useState(amount0)
   const [description, setDescription] = useState(entry.description)
   const [counterparty, setCounterparty] = useState(entry.counterparty ?? '')
+  const [company, setCompany] = useState(entry.company ?? '')
   const [counterpartyAccount, setCounterpartyAccount] = useState(entry.counterpartyAccount ?? '')
   const [branch, setBranch] = useState(entry.branch ?? '')
   const [voucherNo, setVoucherNo] = useState(entry.voucherNo ?? '')
@@ -187,9 +198,9 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
     setErr(null)
     try {
       if (isSettlement) {
-        await updateEntry({ ...entry, date, description })
+        await updateEntry({ ...entry, date, description, company: company || undefined })
       } else {
-        const input: QuickInput = { date, amount, description, counterparty: counterparty || undefined, direction, cashAccountCode: cashCode, accrual }
+        const input: QuickInput = { date, amount, description, counterparty: counterparty || undefined, company: company || undefined, direction, cashAccountCode: cashCode, accrual }
         // 使用者已指定科目 → 解除待分類
         const stillUnclassified = categoryCode === '4999' || categoryCode === '6999'
         const rebuilt = buildEntry({
@@ -220,6 +231,16 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
           )}
           <L t="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp} /></L>
           <L t="摘要"><input value={description} onChange={(e) => setDescription(e.target.value)} className={inp} /></L>
+          <L t="公司">
+            {companies.length ? (
+              <select value={company} onChange={(e) => setCompany(e.target.value)} className={inp}>
+                <option value="">（未指定）</option>
+                {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            ) : (
+              <input value={company} onChange={(e) => setCompany(e.target.value)} className={inp} />
+            )}
+          </L>
           {!isSettlement && <>
             <L t="金額"><input type="number" value={amount || ''} min={1} onChange={(e) => setAmount(Math.floor(Number(e.target.value) || 0))} className={`${inp} text-right`} /></L>
             <L t="對象"><input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} className={inp} /></L>

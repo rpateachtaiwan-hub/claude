@@ -7,9 +7,10 @@ const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
 const catZh: Record<Category, string> = { asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用' }
 
 export default function Settings() {
-  const { accounts, addAccount, deleteAccount, aiConfig, setAiConfig } = useLedger()
+  const { accounts, addAccount, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
   const [editing, setEditing] = useState<Account | null>(null)
   const [adding, setAdding] = useState(false)
+  const [newCompany, setNewCompany] = useState('')
 
   const [enabled, setEnabled] = useState(aiConfig.enabled)
   const [key, setKey] = useState(aiConfig.apiKey)
@@ -18,6 +19,34 @@ export default function Settings() {
 
   return (
     <div className="w-full p-4 sm:p-6 space-y-6">
+      {/* 公司 */}
+      <section>
+        <h2 className="text-sm font-bold text-gray-900 mb-2">公司</h2>
+        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+          <p className="text-xs text-gray-500">多公司帳務用。記一筆與匯入時可選擇所屬公司，報表可依公司檢視。</p>
+          <div className="flex gap-2">
+            <input value={newCompany} onChange={(e) => setNewCompany(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && newCompany.trim()) { addCompany(newCompany); setNewCompany('') } }}
+              placeholder="輸入公司名稱…" className={`${inp} flex-1`} />
+            <button onClick={() => { if (newCompany.trim()) { addCompany(newCompany); setNewCompany('') } }}
+              className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark whitespace-nowrap">新增</button>
+          </div>
+          {companies.length === 0 ? (
+            <p className="text-xs text-gray-400">尚未建立公司。</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {companies.map((c) => (
+                <span key={c} className="inline-flex items-center gap-1 bg-brand-soft text-brand-dark text-sm rounded-full pl-3 pr-2 py-1">
+                  {c}
+                  <button onClick={() => { if (confirm(`刪除公司「${c}」？（不影響已記錄的交易）`)) deleteCompany(c) }}
+                    className="text-brand/60 hover:text-red-500">✕</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Gemini 智慧判斷 */}
       <section>
         <h2 className="text-sm font-bold text-gray-900 mb-2">智慧分類（Google Gemini）</h2>

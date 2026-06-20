@@ -20,6 +20,7 @@ interface PersistShape {
   accounts: Account[]
   rules: Rule[]
   entries: JournalEntry[]
+  companies: string[]
 }
 
 interface LedgerState extends PersistShape {
@@ -36,6 +37,8 @@ interface LedgerState extends PersistShape {
   deleteEntry: (id: string) => Promise<void>
   addAccount: (a: Account) => Promise<void>
   deleteAccount: (code: string) => Promise<void>
+  addCompany: (name: string) => Promise<void>
+  deleteCompany: (name: string) => Promise<void>
   setAiConfig: (cfg: AiConfig) => void
   // 沖銷
   openItems: () => OpenItem[]
@@ -73,20 +76,23 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   accounts: [],
   rules: [],
   entries: [],
+  companies: [],
 
   init: async () => {
     if (hasSupabase) {
       try {
-        const [accRes, ruleRes, entRes] = await Promise.all([
+        const [accRes, ruleRes, entRes, coRes] = await Promise.all([
           supabase.from('accounts').select('data').order('code'),
           supabase.from('rules').select('data'),
           supabase.from('entries').select('data').order('date'),
+          supabase.from('companies').select('name').order('name'),
         ])
         if (!accRes.error && accRes.data) {
           const accounts = (accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
           const rules = (ruleRes.data?.length ? ruleRes.data.map((r) => r.data as Rule) : [])
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
-          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, entries })
+          const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, entries, companies })
           return
         }
       } catch {
@@ -101,6 +107,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
       accounts: local?.accounts ?? DEFAULT_ACCOUNTS,
       rules: local?.rules ?? [],
       entries: local?.entries ?? [],
+      companies: local?.companies ?? [],
     })
   },
 
@@ -117,7 +124,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     const entries = [...get().entries, entry]
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
-    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
     return entry
   },
 
@@ -125,28 +132,44 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     const entries = get().entries.map((e) => (e.id === entry.id ? entry : e))
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').upsert({ id: entry.id, date: entry.date, data: entry })
-    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
   },
 
   deleteEntry: async (id) => {
     const entries = get().entries.filter((e) => e.id !== id)
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').delete().eq('id', id)
-    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
   },
 
   addAccount: async (a) => {
     const accounts = [...get().accounts.filter((x) => x.code !== a.code), a]
     set({ accounts })
     if (get().usingSupabase) await supabase.from('accounts').upsert({ code: a.code, data: a })
-    else saveLocal({ accounts, rules: get().rules, entries: get().entries })
+    else saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
   },
 
   deleteAccount: async (code) => {
     const accounts = get().accounts.filter((a) => a.code !== code)
     set({ accounts })
     if (get().usingSupabase) await supabase.from('accounts').delete().eq('code', code)
-    else saveLocal({ accounts, rules: get().rules, entries: get().entries })
+    else saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
+  },
+
+  addCompany: async (name) => {
+    const n = name.trim()
+    if (!n || get().companies.includes(n)) return
+    const companies = [...get().companies, n].sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+    set({ companies })
+    if (get().usingSupabase) await supabase.from('companies').upsert({ name: n })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries: get().entries, companies })
+  },
+
+  deleteCompany: async (name) => {
+    const companies = get().companies.filter((c) => c !== name)
+    set({ companies })
+    if (get().usingSupabase) await supabase.from('companies').delete().eq('name', name)
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries: get().entries, companies })
   },
 
   openItems: () => computeOpenItems(get().entries, get().accounts),
@@ -158,7 +181,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     const entries = [...get().entries, entry]
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
-    else saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
   },
 
   addEntriesBulk: async (newEntries) => {
@@ -167,7 +190,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     if (get().usingSupabase) {
       await supabase.from('entries').insert(newEntries.map((e) => ({ id: e.id, date: e.date, data: e })))
     } else {
-      saveLocal({ accounts: get().accounts, rules: get().rules, entries })
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
     }
   },
 
@@ -179,7 +202,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     if (get().usingSupabase) {
       await supabase.from('accounts').upsert(incoming.map((a) => ({ code: a.code, data: a })))
     } else {
-      saveLocal({ accounts, rules: get().rules, entries: get().entries })
+      saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
     }
   },
 }))
