@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { buildEntry } from '../core/engine'
 import { composeEntry } from '../core/suggest'
-import { classifyWithGemini } from '../core/ai'
 import { PLACEHOLDER_ACCOUNTS, UNCLASSIFIED_IN, UNCLASSIFIED_OUT } from '../core/accounts'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
@@ -58,88 +57,75 @@ function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void 
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, companies, addEntriesBulk, addAccountsBulk, aiConfig } = useLedger()
-  const [parsed, setParsed] = useState<ReturnType<typeof mapTxRows> | null>(null)
+  const { accounts, companies, addEntriesBulk, addAccountsBulk } = useLedger()
+  const [rawRows, setRawRows] = useState<string[][] | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [company, setCompany] = useState('')
-  const [progress, setProgress] = useState<string | null>(null)
+  const [cashCode, setCashCode] = useState('')
+  const [busy, setBusy] = useState(false)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
-  const cashAccounts = accounts.filter((a) => a.isCash)
-  const accByCode = new Map(accounts.map((a) => [a.code, a]))
+
+  // 收/付款帳戶選項：優先現金科目，無則列資產類
+  const cashOptions = accounts.filter((a) => a.isCash).length ? accounts.filter((a) => a.isCash) : accounts.filter((a) => a.category === 'asset')
 
   React.useEffect(() => { if (!company && companies.length) setCompany(companies[0]) }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    if (cashOptions.length && !cashOptions.some((a) => a.code === cashCode)) {
+      const prefer = cashOptions.find((a) => /銀行|現金/.test(a.name)) ?? cashOptions[0]
+      setCashCode(prefer.code)
+    }
+  }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) {
-    setDone(null)
-    setParsed(mapTxRows(rows, accounts))
-  }
+  function handle(rows: string[][]) { setDone(null); setRawRows(rows) }
 
+  const parsed = React.useMemo(
+    () => (rawRows && cashCode ? mapTxRows(rawRows, accounts, cashCode) : null),
+    [rawRows, accounts, cashCode],
+  )
   const needCompany = companies.length > 0 && !company
 
-  // 由已建立的傳票還原成 QuickInput（供 Gemini 重新分類）
-  function deriveInput(e: JournalEntry): QuickInput {
-    const settle = e.lines.find((l) => accByCode.get(l.accountCode)?.isCash) ?? (e.lines.find((l) => l.debit > 0) ?? e.lines[0])
-    const direction: 'in' | 'out' = settle.debit > 0 ? 'in' : 'out'
-    return {
-      date: e.date, amount: settle.debit || settle.credit, description: e.description,
-      counterparty: e.counterparty, company: e.company, direction, cashAccountCode: settle.accountCode, accrual: false,
-    }
-  }
-
-  // 以 Gemini 對整批做初步分類（依不重複的摘要分組，省呼叫次數）
-  async function classifyEntries(list: JournalEntry[]): Promise<JournalEntry[]> {
-    const keyOf = (e: JournalEntry) => `${deriveInput(e).direction}|${e.description}|${e.counterparty ?? ''}`
-    const keys = [...new Set(list.map(keyOf))]
-    const map = new Map<string, string | null>()
-    for (let i = 0; i < keys.length; i++) {
-      setProgress(`Gemini 分類中… ${i + 1}/${keys.length}`)
-      const sample = list.find((e) => keyOf(e) === keys[i])!
-      const r = await classifyWithGemini(deriveInput(sample), accounts, aiConfig)
-      map.set(keys[i], r?.accountCode ?? null)
-    }
-    setProgress(null)
-    return list.map((e) => {
-      const code = map.get(keyOf(e))
-      if (!code) return e // 判斷不出 → 維持待分類
-      const input = deriveInput(e)
-      return buildEntry({
-        ...composeEntry(input, code, accounts), id: e.id, company: e.company,
-        counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false,
-      })
-    })
-  }
-
   async function doImport() {
-    if (!parsed?.entries.length || needCompany) return
-    await addAccountsBulk(PLACEHOLDER_ACCOUNTS) // 確保「待分類」科目存在
-    let entries: JournalEntry[] = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
-    if (aiConfig.enabled) {
-      try { entries = await classifyEntries(entries) } catch { setProgress(null) }
-    }
-    await addEntriesBulk(entries)
-    const review = entries.filter((e) => e.needsReview).length
-    setDone(`已匯入 ${entries.length} 筆交易${company ? `（公司：${company}）` : ''}${review ? `，其中 ${review} 筆待分類（請到「明細」補上科目）` : '，已全部分類'}`)
-    setParsed(null)
+    if (!parsed?.entries.length || needCompany || !cashCode) return
+    setBusy(true)
+    try {
+      await addAccountsBulk(PLACEHOLDER_ACCOUNTS) // 確保「收入(未分類)/其他成本」存在
+      const entries = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
+      await addEntriesBulk(entries)
+      const review = entries.filter((e) => e.needsReview).length
+      setDone(`已匯入 ${entries.length} 筆交易${company ? `（公司：${company}）` : ''}${review ? `，其中 ${review} 筆未對到科目（已暫列未分類，請到「明細」補上）` : '，已全部對到科目'}`)
+      setRawRows(null)
+    } finally { setBusy(false) }
   }
 
   return (
     <div className="space-y-3">
       <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
-        直接上傳 Excel/CSV 檔（<b>第一列需為標題</b>）。自動辨識欄位（含銀行下載格式）：
-        <b>帳務/付款日期、備註/內容、提出/支出、存入/收入、對方帳號、交易分行</b>。
-        匯入時若已啟用 Gemini，會<b>自動參考你的會計科目做初步分類</b>（例：健保費 → 借 健保費/貸 銀行）；
-        判斷不出的才列為<b>「待分類」</b>並在「明細」標示提醒，供你補上。
+        上傳 Excel/CSV（<b>第一列需為標題</b>）。辨識欄位：<b>日期、內容/備註、收入、支出、類別、對方帳號、交易分行</b>。
+        借貸以<b>所選銀行帳戶</b>為基準：有「收入」金額＝借銀行、有「支出」＝貸銀行。
+        科目優先用<b>「類別」欄</b>對應你科目表中的科目；對不到的，收入暫列<b>「收入(未分類)」</b>、支出暫列<b>「其他成本」</b>，於明細再調整（應收/應付也在明細手動改）。
       </div>
 
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">這份檔案屬於哪間公司？</label>
-        {companies.length ? (
-          <select value={company} onChange={(e) => setCompany(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand">
-            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        ) : (
-          <p className="text-xs text-amber-600">尚未建立公司，請先到「設定 → 公司」新增；未選公司也可匯入，但建議先建立。</p>
-        )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">這份檔案屬於哪間公司？</label>
+          {companies.length ? (
+            <select value={company} onChange={(e) => setCompany(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand">
+              {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <p className="text-xs text-amber-600">尚未建立公司，請先到「設定 → 公司」新增。</p>
+          )}
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">這份檔案的銀行 / 現金帳戶</label>
+          {cashOptions.length ? (
+            <select value={cashCode} onChange={(e) => setCashCode(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand">
+              {cashOptions.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+            </select>
+          ) : (
+            <p className="text-xs text-amber-600">尚無資產/現金科目，請先到「設定 → 科目表」新增一個（並勾「現金/銀行帳戶」）。</p>
+          )}
+        </div>
       </div>
 
       <FileBox onRows={handle} />
@@ -149,7 +135,7 @@ function ImportTx() {
       {parsed && (parsed.totalRows > 0 || parsed.entries.length > 0) && (
         <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
           讀到 <b>{parsed.totalRows}</b> 列 · 可匯入 <b className="text-brand">{parsed.entries.length}</b> 筆
-          {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 待分類 {parsed.needsReviewCount} 筆</span>}
+          {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 未對到科目 {parsed.needsReviewCount} 筆</span>}
           {parsed.skippedNoAmount > 0 && <span> · 略過無金額 {parsed.skippedNoAmount} 列</span>}
           {parsed.skippedNoDate > 0 && <span className="text-amber-600"> · 略過日期無法辨識 {parsed.skippedNoDate} 列</span>}
         </div>
@@ -180,13 +166,8 @@ function ImportTx() {
               </tbody>
             </table>
           </div>
-          {parsed.unmatchedAccounts.length > 0 && (
-            <div className="text-xs text-amber-700">
-              下列「帳戶」找不到對應現金科目，已暫用「{cashAccounts[0]?.name}」：{parsed.unmatchedAccounts.join('、')}。
-            </div>
-          )}
-          <button onClick={doImport} disabled={needCompany || !!progress} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
-            {progress ?? `確認匯入 ${parsed.entries.length} 筆${company ? `到「${company}」` : ''}`}
+          <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
+            {busy ? '匯入中…' : `確認匯入 ${parsed.entries.length} 筆${company ? `到「${company}」` : ''}`}
           </button>
         </>
       )}
@@ -200,9 +181,21 @@ function findCol(headers: string[], ...keys: string[]): number {
   return headers.findIndex((h) => keys.some((k) => h.includes(k)))
 }
 
-function mapTxRows(rows: string[][], accounts: Account[]) {
+// 由「類別」欄文字對應到科目表中的科目：先精確比對，再取「科目名稱為類別文字子字串」中最長者。
+function matchCategory(catText: string, accounts: Account[]): string | null {
+  const t = catText.trim()
+  if (!t) return null
+  const exact = accounts.find((a) => !a.isCash && (a.name === t || a.code === t))
+  if (exact) return exact.code
+  const sub = accounts
+    .filter((a) => !a.isCash && a.name.length >= 2 && t.includes(a.name))
+    .sort((a, b) => b.name.length - a.name.length)[0]
+  return sub?.code ?? null
+}
+
+function mapTxRows(rows: string[][], accounts: Account[], cashCode: string) {
   const result = {
-    entries: [] as JournalEntry[], unmatchedAccounts: [] as string[],
+    entries: [] as JournalEntry[],
     error: null as string | null, totalRows: 0, skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0,
   }
   if (rows.length < 2) { result.error = '檔案需含標題列與至少一列資料。'; return result }
@@ -210,7 +203,6 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
   const cDate = findCol(headers, '帳務日期', '付款日期', '日期')
   const cDesc = findCol(headers, '備註', '內容', '摘要', '說明')
   const cCat = findCol(headers, '類別')
-  const cAcct = findCol(headers, '帳戶')
   const cCpAcct = findCol(headers, '對方帳號')
   const cBranch = findCol(headers, '交易分行', '分行')
   const cInvNo = findCol(headers, '收入發票號碼', '發票號碼', '發票')
@@ -222,9 +214,6 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
     return result
   }
 
-  const cashAccounts = accounts.filter((a) => a.isCash)
-  const defaultCash = cashAccounts[0]?.code ?? '1102'
-  const unmatched = new Set<string>()
   let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
 
   for (const row of rows.slice(1)) {
@@ -242,31 +231,24 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
     if (!date) { result.skippedNoDate++; continue }
 
     const direction: 'in' | 'out' = income > 0 ? 'in' : 'out'
-    const desc = (cDesc >= 0 ? row[cDesc] : '') || (cCat >= 0 ? row[cCat] : '') || '（無備註）'
-    const counterparty = cCat >= 0 ? row[cCat] || undefined : undefined
+    const desc = (cDesc >= 0 ? row[cDesc] : '') || '（無備註）'
+    const catText = cCat >= 0 ? (row[cCat] ?? '').trim() : ''
     const counterpartyAccount = cCpAcct >= 0 ? row[cCpAcct] || undefined : undefined
     const branch = cBranch >= 0 ? row[cBranch] || undefined : undefined
     const invNo = cInvNo >= 0 ? row[cInvNo] : ''
     const voucher = cVoucher >= 0 ? row[cVoucher] : ''
     const voucherNo = (direction === 'in' ? invNo || voucher : voucher || invNo) || undefined
-    const acctText = cAcct >= 0 ? row[cAcct] : ''
-    let cashCode = defaultCash
-    if (acctText) {
-      const hit = cashAccounts.find((a) => a.name.includes(acctText) || acctText.includes(a.name))
-      if (hit) cashCode = hit.code
-      else unmatched.add(acctText)
-    }
 
-    // 無法辨識科目 → 列為「待分類」並標記 needsReview，供人工/AI 補分類
-    const categoryCode = direction === 'in' ? UNCLASSIFIED_IN : UNCLASSIFIED_OUT
-    result.needsReviewCount++
+    // 科目：先用「類別」對應科目表；對不到 → 收入(未分類)/其他成本，並標記未分類
+    const matched = matchCategory(catText, accounts)
+    const categoryCode = matched ?? (direction === 'in' ? UNCLASSIFIED_IN : UNCLASSIFIED_OUT)
+    if (!matched) result.needsReviewCount++
 
-    const input: QuickInput = { date, amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
+    const input: QuickInput = { date, amount, description: desc, counterparty: catText || undefined, direction, cashAccountCode: cashCode }
     try {
-      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode, accounts), counterpartyAccount, branch, voucherNo, needsReview: true }))
+      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode, accounts), counterpartyAccount, branch, voucherNo, needsReview: !matched }))
     } catch { /* skip */ }
   }
-  result.unmatchedAccounts = [...unmatched]
   return result
 }
 

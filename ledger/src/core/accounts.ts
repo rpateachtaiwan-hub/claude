@@ -30,8 +30,8 @@ export const DEFAULT_ACCOUNTS: Account[] = [
   { code: '6106', name: '廣告行銷費', category: 'expense', normalBalance: 'debit' },
   { code: '6199', name: '雜費', category: 'expense', normalBalance: 'debit' },
   // 待分類（匯入時無法辨識科目者暫列於此，請於明細補上正確科目）
-  { code: '4999', name: '待分類收入', category: 'revenue', normalBalance: 'credit' },
-  { code: '6999', name: '待分類支出', category: 'expense', normalBalance: 'debit' },
+  { code: '4999', name: '收入(未分類)', category: 'revenue', normalBalance: 'credit' },
+  { code: '6999', name: '其他成本', category: 'expense', normalBalance: 'debit' },
 ]
 
 export const UNCLASSIFIED_IN = '4999'
