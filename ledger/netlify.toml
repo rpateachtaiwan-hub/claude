@@ -3,9 +3,15 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  functions = "netlify/functions"
 
 [build.environment]
   NODE_VERSION = "20"
+
+# 確保前端 SPA fallback 不攔截 serverless 函式
+[[redirects]]
+  from = "/.netlify/functions/*"
+  status = 200
 
 # 單頁應用（無前端路由），保險起見仍加 fallback
 [[redirects]]

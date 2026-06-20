@@ -11,6 +11,7 @@ export default function Settings() {
   const [editing, setEditing] = useState<Account | null>(null)
   const [adding, setAdding] = useState(false)
 
+  const [enabled, setEnabled] = useState(aiConfig.enabled)
   const [key, setKey] = useState(aiConfig.apiKey)
   const [model, setModel] = useState(aiConfig.model)
   const [saved, setSaved] = useState(false)
@@ -22,19 +23,20 @@ export default function Settings() {
         <h2 className="text-sm font-bold text-gray-900 mb-2">智慧分類（Google Gemini）</h2>
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <p className="text-xs text-gray-500 leading-relaxed">
-            填入你的 Gemini API 金鑰後，「記一筆」會改用 Gemini 判斷科目與借貸（取代固定規則）。
-            金鑰只存在你的瀏覽器、由瀏覽器直接呼叫 Google。未填則使用內建預設分類。
+            啟用後，「記一筆」與「明細→分類待分類」會用 Gemini 判斷科目。
+            正式版的金鑰由<b>伺服器代理</b>保管（在 Netlify 設定 <code>GEMINI_API_KEY</code>），不會外洩到瀏覽器。
+            下方的金鑰欄為<b>選填</b>，僅供本機開發備援。
           </p>
-          <L t="Gemini API 金鑰"><input type="password" value={key} onChange={(e) => { setKey(e.target.value); setSaved(false) }} className={inp} placeholder="AIza..." /></L>
+          <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setSaved(false) }} />啟用 Gemini 智慧分類</label>
           <L t="模型"><input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false) }} className={inp} placeholder="gemini-2.0-flash" /></L>
+          <L t="Gemini API 金鑰（選填，本機備援）"><input type="password" value={key} onChange={(e) => { setKey(e.target.value); setSaved(false) }} className={inp} placeholder="正式版可留空" /></L>
           <div className="flex items-center gap-3">
-            <button onClick={() => { setAiConfig({ apiKey: key.trim(), model: model.trim() || 'gemini-2.0-flash' }); setSaved(true) }}
+            <button onClick={() => { setAiConfig({ enabled, apiKey: key.trim(), model: model.trim() || 'gemini-2.0-flash' }); setSaved(true) }}
               className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">儲存</button>
             <span className="text-xs text-gray-500">
-              狀態：{aiConfig.apiKey ? `✓ 已啟用（${aiConfig.model}）` : '未設定，使用預設分類'}{saved && ' · 已儲存'}
+              狀態：{aiConfig.enabled ? `✓ 已啟用（${aiConfig.model}）` : '已停用，使用預設分類'}{saved && ' · 已儲存'}
             </span>
           </div>
-          <p className="text-[11px] text-amber-600">提醒：部署到公開網址時，金鑰會存在使用者瀏覽器；多人或對外使用建議改用伺服器代理（後續可加）。</p>
         </div>
       </section>
 

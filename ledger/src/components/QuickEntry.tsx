@@ -37,7 +37,7 @@ export default function QuickEntry() {
 
   // Gemini 判斷（有金鑰時）；debounce 避免每打一字就呼叫
   useEffect(() => {
-    if (!aiConfig.apiKey || amount <= 0 || !description.trim()) { setAi(null); return }
+    if (!aiConfig.enabled || amount <= 0 || !description.trim()) { setAi(null); return }
     let cancelled = false
     setAiLoading(true)
     const t = setTimeout(async () => {
@@ -56,7 +56,7 @@ export default function QuickEntry() {
     ? { cls: 'bg-gray-200 text-gray-600', text: '✦ Gemini 判斷中…' }
     : ai
       ? { cls: 'bg-brand text-white', text: '✦ Gemini 建議' }
-      : { cls: 'bg-gray-200 text-gray-600', text: aiConfig.apiKey ? '預設建議（Gemini 無回應）' : '預設建議' }
+      : { cls: 'bg-gray-200 text-gray-600', text: aiConfig.enabled ? '預設建議（Gemini 無回應）' : '預設建議' }
   const reasonText = ai ? `Gemini：${ai.reason}` : fallback?.reason ?? ''
 
   async function onSubmit() {

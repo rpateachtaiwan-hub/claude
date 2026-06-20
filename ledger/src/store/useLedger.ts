@@ -14,7 +14,7 @@ import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../cor
 
 const LS_KEY = 'qing-ledger-v1'
 const LS_AI = 'qing-ledger-ai'
-const DEFAULT_AI: AiConfig = { apiKey: '', model: 'gemini-2.0-flash' }
+const DEFAULT_AI: AiConfig = { enabled: true, model: 'gemini-2.0-flash', apiKey: '' }
 
 interface PersistShape {
   accounts: Account[]

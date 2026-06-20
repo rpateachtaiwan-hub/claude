@@ -70,7 +70,7 @@ export default function Transactions() {
 
   async function classifyWithAi() {
     const todo = entries.filter((e) => e.needsReview)
-    if (!todo.length || !aiConfig.apiKey) return
+    if (!todo.length || !aiConfig.enabled) return
     let done = 0, ok = 0
     for (const e of todo) {
       setAiBusy(`Gemini 分類中… ${done}/${todo.length}`)
@@ -98,7 +98,7 @@ export default function Transactions() {
             ⚠ 待分類 {reviewCount}
           </button>
         )}
-        {reviewCount > 0 && aiConfig.apiKey && (
+        {reviewCount > 0 && aiConfig.enabled && (
           <button onClick={classifyWithAi} disabled={!!aiBusy}
             className="px-3 py-2 rounded-lg bg-brand text-white text-sm whitespace-nowrap hover:bg-brand-dark disabled:opacity-60">
             {aiBusy ?? `用 Gemini 分類待分類`}
