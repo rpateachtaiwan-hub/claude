@@ -214,7 +214,7 @@ export default function Transactions() {
   )
 }
 
-// 明細列內嵌：直接修改分類科目（非現金腳），改完立即儲存
+// 明細列內嵌：借方、貸方科目皆可直接修改，改完立即儲存
 function CategoryCell({ e }: { e: JournalEntry }) {
   const { accounts, updateEntry } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
@@ -226,29 +226,41 @@ function CategoryCell({ e }: { e: JournalEntry }) {
   }
 
   const byCode = new Map(accounts.map((a) => [a.code, a]))
-  const categoryAccounts = accounts.filter((a) => !a.isCash)
-  const settleLeg = e.lines.find((l) => byCode.get(l.accountCode)?.isCash || byCode.get(l.accountCode)?.isOpenItem) ?? e.lines[0]
-  const catLeg = e.lines.find((l) => l !== settleLeg) ?? e.lines[1]
-  const dir: 'in' | 'out' = settleLeg.debit > 0 ? 'in' : 'out'
+  const options = [...accounts].sort((a, b) => a.code.localeCompare(b.code))
+  const amount = dr.debit
 
-  async function change(code: string) {
-    const input = entryToInput(e, accounts)
+  async function set(side: 'debit' | 'credit', code: string) {
+    const debitCode = side === 'debit' ? code : dr.accountCode
+    const creditCode = side === 'credit' ? code : cr.accountCode
+    const isCash = (c: string) => byCode.get(c)?.isCash
+    const isOpen = (c: string) => byCode.get(c)?.isOpenItem
+    let source: JournalEntry['source'] = 'manual'
+    if (isCash(debitCode) || isCash(creditCode)) source = 'cash'
+    else if (isOpen(debitCode) || isOpen(creditCode)) source = 'accrual'
     await updateEntry(buildEntry({
-      ...composeEntry(input, code, accounts), id: e.id, company: e.company,
-      counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false,
+      date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
+      counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo,
+      source, settled: source === 'accrual' ? false : source === 'cash' ? true : undefined,
+      id: e.id, needsReview: false,
+      lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
     }))
   }
 
-  const sel = (
-    <select value={catLeg.accountCode} onChange={(ev) => change(ev.target.value)}
-      className={`border rounded px-1 py-0.5 text-xs max-w-[160px] focus:outline-none focus:ring-1 focus:ring-brand ${e.needsReview ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`}>
-      {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-    </select>
+  const selCls = `border rounded px-1 py-0.5 text-xs max-w-[160px] focus:outline-none focus:ring-1 focus:ring-brand ${e.needsReview ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`
+  return (
+    <div className="space-y-0.5 text-xs text-gray-600">
+      <div className="flex items-center gap-1">借
+        <select value={dr.accountCode} onChange={(ev) => set('debit', ev.target.value)} className={selCls}>
+          {options.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+        </select>
+      </div>
+      <div className="flex items-center gap-1">貸
+        <select value={cr.accountCode} onChange={(ev) => set('credit', ev.target.value)} className={selCls}>
+          {options.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+        </select>
+      </div>
+    </div>
   )
-
-  return dir === 'out'
-    ? <div className="space-y-0.5 text-xs text-gray-600"><div className="flex items-center gap-1">借 {sel}</div><div>貸 {accName(settleLeg.accountCode)}</div></div>
-    : <div className="space-y-0.5 text-xs text-gray-600"><div>借 {accName(settleLeg.accountCode)}</div><div className="flex items-center gap-1">貸 {sel}</div></div>
 }
 
 function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => void }) {
