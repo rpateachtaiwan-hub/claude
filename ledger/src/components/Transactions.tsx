@@ -66,6 +66,10 @@ export default function Transactions() {
     }))
   }, [accounts, updateEntry])
 
+  const setEntryDate = React.useCallback(async (e: JournalEntry, date: string) => {
+    await updateEntry({ ...e, date })
+  }, [updateEntry])
+
   const reviewCount = entries.filter((e) => e.needsReview).length
 
   const rows = useMemo(() => {
@@ -212,7 +216,7 @@ export default function Transactions() {
               return (
                 <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${selected.has(e.id) ? 'bg-brand-soft/40' : e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
                   <td className="px-3 py-2.5 text-center"><input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} /></td>
-                  <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{e.date}</td>
+                  <td className="px-3 py-2.5 text-gray-500"><DateCell e={e} onSet={setEntryDate} /></td>
                   <td className="px-3 py-2.5 text-gray-800">
                     {e.needsReview && <span className="mr-1 text-[10px] text-amber-700 bg-amber-100 rounded px-1 py-0.5 font-medium">⚠ 待分類</span>}
                     {e.company && <span className="mr-1 text-[10px] text-brand bg-brand-soft rounded px-1.5 py-0.5">{e.company}</span>}
@@ -255,6 +259,21 @@ export default function Transactions() {
     </div>
   )
 }
+
+// 明細列內嵌：點擊修改日期
+const DateCell = React.memo(function DateCell(
+  { e, onSet }: { e: JournalEntry; onSet: (e: JournalEntry, date: string) => void },
+) {
+  const [edit, setEdit] = useState(false)
+  if (edit) {
+    return (
+      <input type="date" autoFocus defaultValue={e.date}
+        onBlur={(ev) => { if (ev.target.value && ev.target.value !== e.date) onSet(e, ev.target.value); setEdit(false) }}
+        className="border border-brand rounded px-1 py-0.5 text-xs focus:outline-none" />
+    )
+  }
+  return <span className="cursor-pointer hover:bg-brand-soft rounded px-1 whitespace-nowrap" title="點擊修改日期" onClick={() => setEdit(true)}>{e.date} ✎</span>
+})
 
 // 明細列內嵌：借/貸科目可改。平常顯示文字，點擊才變下拉（避免一次渲染大量選項拖慢）。
 const CategoryCell = React.memo(function CategoryCell(
