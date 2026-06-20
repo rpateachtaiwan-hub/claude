@@ -152,6 +152,8 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
   const cAcct = findCol(headers, '帳戶')
   const cCpAcct = findCol(headers, '對方帳號')
   const cBranch = findCol(headers, '交易分行', '分行')
+  const cInvNo = findCol(headers, '收入發票號碼', '發票號碼', '發票')
+  const cVoucher = findCol(headers, '支出憑證類別', '憑證類別', '憑證編號', '憑證')
   const cIn = headers.findIndex((h) => ['存入金額', '收入'].includes(h.trim()) || h.includes('存入') || (h.includes('收入') && !h.includes('發票')))
   const cOut = headers.findIndex((h) => ['提出金額', '支出'].includes(h.trim()) || h.includes('提出') || (h.includes('支出') && !h.includes('憑證')))
   if (cDate < 0 || (cIn < 0 && cOut < 0)) {
@@ -183,6 +185,9 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
     const counterparty = cCat >= 0 ? row[cCat] || undefined : undefined
     const counterpartyAccount = cCpAcct >= 0 ? row[cCpAcct] || undefined : undefined
     const branch = cBranch >= 0 ? row[cBranch] || undefined : undefined
+    const invNo = cInvNo >= 0 ? row[cInvNo] : ''
+    const voucher = cVoucher >= 0 ? row[cVoucher] : ''
+    const voucherNo = (direction === 'in' ? invNo || voucher : voucher || invNo) || undefined
     const acctText = cAcct >= 0 ? row[cAcct] : ''
     let cashCode = defaultCash
     if (acctText) {
@@ -197,7 +202,7 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
 
     const input: QuickInput = { date, amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
     try {
-      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode), counterpartyAccount, branch, needsReview: true }))
+      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode), counterpartyAccount, branch, voucherNo, needsReview: true }))
     } catch { /* skip */ }
   }
   result.unmatchedAccounts = [...unmatched]

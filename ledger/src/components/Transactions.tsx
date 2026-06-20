@@ -40,7 +40,7 @@ export default function Transactions() {
       if (onlyReview && !e.needsReview) return false
       if (!kw) return true
       const dr = e.lines.find((l) => l.debit > 0); const cr = e.lines.find((l) => l.credit > 0)
-      const hay = [e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', accName(dr?.accountCode ?? ''), accName(cr?.accountCode ?? ''), String(amountOf(e))].join(' ').toLowerCase()
+      const hay = [e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', accName(dr?.accountCode ?? ''), accName(cr?.accountCode ?? ''), String(amountOf(e))].join(' ').toLowerCase()
       return hay.includes(kw)
     })
     return [...filtered].sort((a, b) => {
@@ -61,11 +61,11 @@ export default function Transactions() {
   function exportCsv() {
     const data = rows.map((e) => {
       const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
-      return [e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '',
+      return [e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '',
         accName(dr.accountCode), accName(cr.accountCode), dr.debit,
         e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金', e.needsReview ? '待分類' : '']
     })
-    downloadCSV('交易明細', toCSV(['日期', '摘要', '對象', '對方帳號', '交易分行', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
+    downloadCSV('交易明細', toCSV(['日期', '摘要', '對象', '對方帳號', '交易分行', '憑證編號', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
   }
 
   async function classifyWithAi() {
@@ -77,7 +77,7 @@ export default function Transactions() {
       const input = entryToInput(e, accounts)
       const r = await classifyWithGemini(input, accounts, aiConfig)
       if (r) {
-        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode), id: e.id, counterpartyAccount: e.counterpartyAccount, branch: e.branch, needsReview: false })
+        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode), id: e.id, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
         await updateEntry(rebuilt)
         ok++
       }
@@ -131,10 +131,11 @@ export default function Transactions() {
                     {e.counterparty && <span className="text-gray-400 text-xs"> · {e.counterparty}</span>}
                     {e.source === 'accrual' && <span className="ml-1 text-[10px] text-amber-600 bg-amber-50 rounded px-1">應計</span>}
                     {e.source === 'settlement' && <span className="ml-1 text-[10px] text-brand bg-brand-soft rounded px-1">沖銷</span>}
-                    {(e.counterpartyAccount || e.branch) && (
+                    {(e.counterpartyAccount || e.branch || e.voucherNo) && (
                       <div className="text-[10px] text-gray-400 mt-0.5">
                         {e.counterpartyAccount && <span>對方帳號 {e.counterpartyAccount}　</span>}
-                        {e.branch && <span>分行 {e.branch}</span>}
+                        {e.branch && <span>分行 {e.branch}　</span>}
+                        {e.voucherNo && <span>憑證 {e.voucherNo}</span>}
                       </div>
                     )}
                   </td>
@@ -176,6 +177,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
   const [counterparty, setCounterparty] = useState(entry.counterparty ?? '')
   const [counterpartyAccount, setCounterpartyAccount] = useState(entry.counterpartyAccount ?? '')
   const [branch, setBranch] = useState(entry.branch ?? '')
+  const [voucherNo, setVoucherNo] = useState(entry.voucherNo ?? '')
   const [categoryCode, setCategoryCode] = useState(categoryLeg.accountCode)
   const [cashCode, setCashCode] = useState(accrual0 ? (cashAccounts[0]?.code ?? '1102') : settleLeg.accountCode)
   const [accrual, setAccrual] = useState(accrual0)
@@ -192,7 +194,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
         const stillUnclassified = categoryCode === '4999' || categoryCode === '6999'
         const rebuilt = buildEntry({
           ...composeEntry(input, categoryCode), id: entry.id,
-          counterpartyAccount: counterpartyAccount || undefined, branch: branch || undefined,
+          counterpartyAccount: counterpartyAccount || undefined, branch: branch || undefined, voucherNo: voucherNo || undefined,
           needsReview: stillUnclassified ? entry.needsReview : false,
         })
         await updateEntry(rebuilt)
@@ -225,6 +227,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
               <L t="對方帳號"><input value={counterpartyAccount} onChange={(e) => setCounterpartyAccount(e.target.value)} className={inp} /></L>
               <L t="交易分行"><input value={branch} onChange={(e) => setBranch(e.target.value)} className={inp} /></L>
             </div>
+            <L t="憑證編號"><input value={voucherNo} onChange={(e) => setVoucherNo(e.target.value)} className={inp} /></L>
             <L t="分類科目">
               <select value={categoryCode} onChange={(e) => setCategoryCode(e.target.value)} className={inp}>
                 {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}

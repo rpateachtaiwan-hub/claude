@@ -52,6 +52,7 @@ export function buildEntry(input: {
   settles?: string
   counterpartyAccount?: string
   branch?: string
+  voucherNo?: string
   needsReview?: boolean
   id?: string
 }): JournalEntry {
@@ -67,6 +68,7 @@ export function buildEntry(input: {
     settles: input.settles,
     counterpartyAccount: input.counterpartyAccount,
     branch: input.branch,
+    voucherNo: input.voucherNo,
     needsReview: input.needsReview,
     createdAt: new Date().toISOString(),
   }
