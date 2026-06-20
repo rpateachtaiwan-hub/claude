@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { buildEntry } from '../core/engine'
 import { composeEntry } from '../core/suggest'
+import { classifyWithGemini } from '../core/ai'
 import { PLACEHOLDER_ACCOUNTS, UNCLASSIFIED_IN, UNCLASSIFIED_OUT } from '../core/accounts'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
@@ -57,12 +58,14 @@ function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void 
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, companies, addEntriesBulk, addAccountsBulk } = useLedger()
+  const { accounts, companies, addEntriesBulk, addAccountsBulk, aiConfig } = useLedger()
   const [parsed, setParsed] = useState<ReturnType<typeof mapTxRows> | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [company, setCompany] = useState('')
+  const [progress, setProgress] = useState<string | null>(null)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const cashAccounts = accounts.filter((a) => a.isCash)
+  const accByCode = new Map(accounts.map((a) => [a.code, a]))
 
   React.useEffect(() => { if (!company && companies.length) setCompany(companies[0]) }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -73,12 +76,49 @@ function ImportTx() {
 
   const needCompany = companies.length > 0 && !company
 
+  // 由已建立的傳票還原成 QuickInput（供 Gemini 重新分類）
+  function deriveInput(e: JournalEntry): QuickInput {
+    const settle = e.lines.find((l) => accByCode.get(l.accountCode)?.isCash) ?? (e.lines.find((l) => l.debit > 0) ?? e.lines[0])
+    const direction: 'in' | 'out' = settle.debit > 0 ? 'in' : 'out'
+    return {
+      date: e.date, amount: settle.debit || settle.credit, description: e.description,
+      counterparty: e.counterparty, company: e.company, direction, cashAccountCode: settle.accountCode, accrual: false,
+    }
+  }
+
+  // 以 Gemini 對整批做初步分類（依不重複的摘要分組，省呼叫次數）
+  async function classifyEntries(list: JournalEntry[]): Promise<JournalEntry[]> {
+    const keyOf = (e: JournalEntry) => `${deriveInput(e).direction}|${e.description}|${e.counterparty ?? ''}`
+    const keys = [...new Set(list.map(keyOf))]
+    const map = new Map<string, string | null>()
+    for (let i = 0; i < keys.length; i++) {
+      setProgress(`Gemini 分類中… ${i + 1}/${keys.length}`)
+      const sample = list.find((e) => keyOf(e) === keys[i])!
+      const r = await classifyWithGemini(deriveInput(sample), accounts, aiConfig)
+      map.set(keys[i], r?.accountCode ?? null)
+    }
+    setProgress(null)
+    return list.map((e) => {
+      const code = map.get(keyOf(e))
+      if (!code) return e // 判斷不出 → 維持待分類
+      const input = deriveInput(e)
+      return buildEntry({
+        ...composeEntry(input, code), id: e.id, company: e.company,
+        counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false,
+      })
+    })
+  }
+
   async function doImport() {
     if (!parsed?.entries.length || needCompany) return
     await addAccountsBulk(PLACEHOLDER_ACCOUNTS) // 確保「待分類」科目存在
-    const entries = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
+    let entries: JournalEntry[] = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
+    if (aiConfig.enabled) {
+      try { entries = await classifyEntries(entries) } catch { setProgress(null) }
+    }
     await addEntriesBulk(entries)
-    setDone(`已匯入 ${entries.length} 筆交易${company ? `（公司：${company}）` : ''}${parsed.needsReviewCount ? `，其中 ${parsed.needsReviewCount} 筆待分類（請到「明細」補上科目）` : ''}`)
+    const review = entries.filter((e) => e.needsReview).length
+    setDone(`已匯入 ${entries.length} 筆交易${company ? `（公司：${company}）` : ''}${review ? `，其中 ${review} 筆待分類（請到「明細」補上科目）` : '，已全部分類'}`)
     setParsed(null)
   }
 
@@ -87,7 +127,8 @@ function ImportTx() {
       <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
         直接上傳 Excel/CSV 檔（<b>第一列需為標題</b>）。自動辨識欄位（含銀行下載格式）：
         <b>帳務/付款日期、備註/內容、提出/支出、存入/收入、對方帳號、交易分行</b>。
-        無法判定科目的交易會先列為<b>「待分類」</b>並在「明細」標示提醒，供你（或 Gemini）補上。
+        匯入時若已啟用 Gemini，會<b>自動參考你的會計科目做初步分類</b>（例：健保費 → 借 健保費/貸 銀行）；
+        判斷不出的才列為<b>「待分類」</b>並在「明細」標示提醒，供你補上。
       </div>
 
       <div>
@@ -144,8 +185,8 @@ function ImportTx() {
               下列「帳戶」找不到對應現金科目，已暫用「{cashAccounts[0]?.name}」：{parsed.unmatchedAccounts.join('、')}。
             </div>
           )}
-          <button onClick={doImport} disabled={needCompany} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
-            確認匯入 {parsed.entries.length} 筆{company ? `到「${company}」` : ''}
+          <button onClick={doImport} disabled={needCompany || !!progress} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
+            {progress ?? `確認匯入 ${parsed.entries.length} 筆${company ? `到「${company}」` : ''}`}
           </button>
         </>
       )}
