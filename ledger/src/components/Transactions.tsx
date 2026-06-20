@@ -34,10 +34,37 @@ export default function Transactions() {
   const [aiBusy, setAiBusy] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
+  const [page, setPage] = useState(0)
+  const pageSize = 100
+
   function toggleOne(id: string) {
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
   function clearSel() { setSelected(new Set()) }
+
+  const sortedAccounts = useMemo(() => [...accounts].sort((a, b) => a.code.localeCompare(b.code)), [accounts])
+
+  // 直接設定某一腳科目（明細內嵌編輯用）
+  const setLeg = React.useCallback(async (e: JournalEntry, side: 'debit' | 'credit', code: string) => {
+    const dr = e.lines.find((l) => l.debit > 0)!
+    const cr = e.lines.find((l) => l.credit > 0)!
+    const amount = dr.debit
+    const debitCode = side === 'debit' ? code : dr.accountCode
+    const creditCode = side === 'credit' ? code : cr.accountCode
+    const byCode = new Map(accounts.map((a) => [a.code, a]))
+    const isCash = (c: string) => byCode.get(c)?.isCash
+    const isOpen = (c: string) => byCode.get(c)?.isOpenItem
+    let source: JournalEntry['source'] = 'manual'
+    if (isCash(debitCode) || isCash(creditCode)) source = 'cash'
+    else if (isOpen(debitCode) || isOpen(creditCode)) source = 'accrual'
+    await updateEntry(buildEntry({
+      date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
+      counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo,
+      source, settled: source === 'accrual' ? false : source === 'cash' ? true : undefined,
+      id: e.id, needsReview: false,
+      lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
+    }))
+  }, [accounts, updateEntry])
 
   const reviewCount = entries.filter((e) => e.needsReview).length
 
@@ -60,6 +87,11 @@ export default function Transactions() {
       return asc ? r : -r
     })
   }, [entries, q, sortKey, asc, onlyReview, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize))
+  const safePage = Math.min(page, pageCount - 1)
+  const pagedRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize)
+  React.useEffect(() => { setPage(0) }, [q, onlyReview, companyFilter])
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setAsc(!asc)
@@ -175,8 +207,8 @@ export default function Transactions() {
           </thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={6} className="px-3 py-10 text-center text-gray-400">{q || onlyReview ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
-            {rows.map((e) => {
-              const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
+            {pagedRows.map((e) => {
+              const dr = e.lines.find((l) => l.debit > 0)!
               return (
                 <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${selected.has(e.id) ? 'bg-brand-soft/40' : e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
                   <td className="px-3 py-2.5 text-center"><input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} /></td>
@@ -196,7 +228,7 @@ export default function Transactions() {
                       </div>
                     )}
                   </td>
-                  <td className="px-3 py-2.5"><CategoryCell e={e} /></td>
+                  <td className="px-3 py-2.5"><CategoryCell e={e} accounts={sortedAccounts} onSet={setLeg} /></td>
                   <td className="px-3 py-2.5 text-right tabular-nums font-medium">{formatTWD(dr.debit)}</td>
                   <td className="px-3 py-2.5 text-center whitespace-nowrap">
                     <button onClick={() => setEditing(e)} className="text-gray-400 hover:text-brand mr-2" title="編輯">✎</button>
@@ -209,14 +241,26 @@ export default function Transactions() {
         </table>
       </div>
 
+      {rows.length > pageSize && (
+        <div className="flex items-center justify-center gap-3 text-sm text-gray-600">
+          <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={safePage === 0}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 disabled:opacity-40">上一頁</button>
+          <span>第 {safePage + 1} / {pageCount} 頁（共 {rows.length} 筆）</span>
+          <button onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))} disabled={safePage >= pageCount - 1}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 disabled:opacity-40">下一頁</button>
+        </div>
+      )}
+
       {editing && <EditModal entry={editing} onClose={() => setEditing(null)} />}
     </div>
   )
 }
 
-// 明細列內嵌：借方、貸方科目皆可直接修改，改完立即儲存
-function CategoryCell({ e }: { e: JournalEntry }) {
-  const { accounts, updateEntry } = useLedger()
+// 明細列內嵌：借/貸科目可改。平常顯示文字，點擊才變下拉（避免一次渲染大量選項拖慢）。
+const CategoryCell = React.memo(function CategoryCell(
+  { e, accounts, onSet }: { e: JournalEntry; accounts: Account[]; onSet: (e: JournalEntry, side: 'debit' | 'credit', code: string) => void },
+) {
+  const [edit, setEdit] = useState<'debit' | 'credit' | null>(null)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const dr = e.lines.find((l) => l.debit > 0)!
   const cr = e.lines.find((l) => l.credit > 0)!
@@ -225,43 +269,27 @@ function CategoryCell({ e }: { e: JournalEntry }) {
     return <div className="text-xs text-gray-600">借 {accName(dr.accountCode)}<br />貸 {accName(cr.accountCode)}</div>
   }
 
-  const byCode = new Map(accounts.map((a) => [a.code, a]))
-  const options = [...accounts].sort((a, b) => a.code.localeCompare(b.code))
-  const amount = dr.debit
-
-  async function set(side: 'debit' | 'credit', code: string) {
-    const debitCode = side === 'debit' ? code : dr.accountCode
-    const creditCode = side === 'credit' ? code : cr.accountCode
-    const isCash = (c: string) => byCode.get(c)?.isCash
-    const isOpen = (c: string) => byCode.get(c)?.isOpenItem
-    let source: JournalEntry['source'] = 'manual'
-    if (isCash(debitCode) || isCash(creditCode)) source = 'cash'
-    else if (isOpen(debitCode) || isOpen(creditCode)) source = 'accrual'
-    await updateEntry(buildEntry({
-      date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
-      counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo,
-      source, settled: source === 'accrual' ? false : source === 'cash' ? true : undefined,
-      id: e.id, needsReview: false,
-      lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
-    }))
+  const leg = (side: 'debit' | 'credit', code: string) => {
+    const cls = `cursor-pointer rounded px-1 hover:bg-brand-soft ${e.needsReview ? 'text-amber-700 underline decoration-dotted' : 'text-gray-700'}`
+    if (edit === side) {
+      return (
+        <select autoFocus value={code} onBlur={() => setEdit(null)}
+          onChange={(ev) => { onSet(e, side, ev.target.value); setEdit(null) }}
+          className="border border-brand rounded px-1 py-0.5 text-xs max-w-[170px] focus:outline-none">
+          {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+        </select>
+      )
+    }
+    return <span className={cls} title="點擊修改科目" onClick={() => setEdit(side)}>{accName(code)} ✎</span>
   }
 
-  const selCls = `border rounded px-1 py-0.5 text-xs max-w-[160px] focus:outline-none focus:ring-1 focus:ring-brand ${e.needsReview ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`
   return (
     <div className="space-y-0.5 text-xs text-gray-600">
-      <div className="flex items-center gap-1">借
-        <select value={dr.accountCode} onChange={(ev) => set('debit', ev.target.value)} className={selCls}>
-          {options.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-        </select>
-      </div>
-      <div className="flex items-center gap-1">貸
-        <select value={cr.accountCode} onChange={(ev) => set('credit', ev.target.value)} className={selCls}>
-          {options.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-        </select>
-      </div>
+      <div className="flex items-center gap-1">借 {leg('debit', dr.accountCode)}</div>
+      <div className="flex items-center gap-1">貸 {leg('credit', cr.accountCode)}</div>
     </div>
   )
-}
+})
 
 function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => void }) {
   const { accounts, updateEntry, companies } = useLedger()
