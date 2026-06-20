@@ -22,8 +22,9 @@ function entryToInput(e: JournalEntry, accounts: Account[]): QuickInput {
 }
 
 export default function Transactions() {
-  const { entries, accounts, deleteEntry, updateEntry, aiConfig, companies } = useLedger()
+  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
+  const categoryAccounts = accounts.filter((a) => !a.isCash)
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [asc, setAsc] = useState(false)
@@ -31,6 +32,12 @@ export default function Transactions() {
   const [companyFilter, setCompanyFilter] = useState('')
   const [editing, setEditing] = useState<JournalEntry | null>(null)
   const [aiBusy, setAiBusy] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  function toggleOne(id: string) {
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function clearSel() { setSelected(new Set()) }
 
   const reviewCount = entries.filter((e) => e.needsReview).length
 
@@ -68,6 +75,26 @@ export default function Transactions() {
         e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金', e.needsReview ? '待分類' : '']
     })
     downloadCSV('交易明細', toCSV(['公司', '日期', '摘要', '對象', '對方帳號', '交易分行', '憑證編號', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
+  }
+
+  const allVisibleSelected = rows.length > 0 && rows.every((e) => selected.has(e.id))
+  function toggleAll() { setSelected(allVisibleSelected ? new Set() : new Set(rows.map((e) => e.id))) }
+
+  async function bulkDelete() {
+    if (!selected.size) return
+    if (!confirm(`刪除選取的 ${selected.size} 筆紀錄？`)) return
+    await deleteEntriesBulk([...selected]); clearSel()
+  }
+  async function bulkSetCompany(co: string) {
+    const upd = entries.filter((e) => selected.has(e.id)).map((e) => ({ ...e, company: co || undefined }))
+    await updateEntriesBulk(upd); clearSel()
+  }
+  async function bulkSetCategory(code: string) {
+    const upd = entries.filter((e) => selected.has(e.id) && e.source !== 'settlement').map((e) => {
+      const input = entryToInput(e, accounts)
+      return buildEntry({ ...composeEntry(input, code, accounts), id: e.id, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
+    })
+    await updateEntriesBulk(upd); clearSel()
   }
 
   async function classifyWithAi() {
@@ -116,10 +143,29 @@ export default function Transactions() {
         <button onClick={exportCsv} className="px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap">⬇ 匯出 Excel</button>
       </div>
 
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-brand-soft border border-brand-light/40 rounded-lg p-2 text-sm">
+          <span className="text-brand-dark font-medium">已選 {selected.size} 筆</span>
+          <button onClick={bulkDelete} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs hover:bg-red-600">刪除</button>
+          <select onChange={(e) => { if (e.target.value) { bulkSetCategory(e.target.value); e.target.value = '' } }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+            <option value="">批次改科目…</option>
+            {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+          </select>
+          {companies.length > 0 && (
+            <select onChange={(e) => { bulkSetCompany(e.target.value); e.target.value = '' }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+              <option value="">批次改公司…</option>
+              {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+          <button onClick={clearSel} className="text-gray-500 text-xs underline">取消選取</button>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-        <table className="w-full min-w-[680px] text-sm">
+        <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-gray-500 text-xs">
+              <th className="px-3 py-2.5 w-8"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} /></th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('date')}>日期{arrow('date')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('description')}>摘要{arrow('description')}</th>
               <th className="px-3 py-2.5 text-left">借 / 貸</th>
@@ -128,11 +174,12 @@ export default function Transactions() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={5} className="px-3 py-10 text-center text-gray-400">{q || onlyReview ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={6} className="px-3 py-10 text-center text-gray-400">{q || onlyReview ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
             {rows.map((e) => {
               const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
               return (
-                <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
+                <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${selected.has(e.id) ? 'bg-brand-soft/40' : e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
+                  <td className="px-3 py-2.5 text-center"><input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} /></td>
                   <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{e.date}</td>
                   <td className="px-3 py-2.5 text-gray-800">
                     {e.needsReview && <span className="mr-1 text-[10px] text-amber-700 bg-amber-100 rounded px-1 py-0.5 font-medium">⚠ 待分類</span>}

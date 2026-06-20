@@ -14,40 +14,31 @@ export default function QuickEntry() {
   const [amount, setAmount] = useState(0)
   const [description, setDescription] = useState('')
   const [counterparty, setCounterparty] = useState('')
+  const [voucherNo, setVoucherNo] = useState('')
   const [company, setCompany] = useState(() => localStorage.getItem('ql-last-company') || '')
-  const [cashAccountCode, setCashAccountCode] = useState('1102')
-  const [accrual, setAccrual] = useState(false)
-
-  // 公司清單載入後，若尚未選擇則預設第一間
-  useEffect(() => {
-    if (!company && companies.length) setCompany(companies[0])
-  }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
   const [override, setOverride] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [ai, setAi] = useState<{ accountCode: string; reason: string } | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
 
-  const cashAccountsRaw = accounts.filter((a) => a.isCash)
-  const cashAccounts = cashAccountsRaw.length ? cashAccountsRaw : accounts.filter((a) => a.category === 'asset')
+  // 公司清單載入後，若尚未選擇則預設第一間
+  useEffect(() => {
+    if (!company && companies.length) setCompany(companies[0])
+  }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash && !a.isOpenItem)
 
-  // 科目表載入/變動後，若目前選的收付款帳戶不存在，改選第一個可用的
-  useEffect(() => {
-    if (cashAccounts.length && !cashAccounts.some((a) => a.code === cashAccountCode)) {
-      setCashAccountCode(cashAccounts[0].code)
-    }
-  }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
-
+  // 記一筆一律為現金收支（不指定帳戶，由系統選銀行現金科目）
   const input: QuickInput = useMemo(
-    () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, direction, cashAccountCode, accrual }),
-    [date, amount, description, counterparty, company, direction, cashAccountCode, accrual],
+    () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, voucherNo: voucherNo || undefined, direction }),
+    [date, amount, description, counterparty, company, voucherNo, direction],
   )
 
   const fallback = useMemo(() => (amount > 0 ? preview(input) : null), [input, amount, preview])
 
-  // 改摘要/方向/對象/應計時，清除手動選擇 → 重新跟隨建議
-  useEffect(() => { setOverride(null) }, [description, direction, counterparty, accrual])
+  // 改摘要/方向/對象時，清除手動選擇 → 重新跟隨建議
+  useEffect(() => { setOverride(null) }, [description, direction, counterparty])
 
   // Gemini 判斷（有金鑰時）；debounce 避免每打一字就呼叫
   useEffect(() => {
@@ -59,7 +50,7 @@ export default function QuickEntry() {
       if (!cancelled) { setAi(r); setAiLoading(false) }
     }, 600)
     return () => { cancelled = true; clearTimeout(t) }
-  }, [description, counterparty, direction, amount, accrual, aiConfig, accounts]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [description, counterparty, direction, amount, aiConfig, accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const suggestedCode = ai?.accountCode ?? fallback?.accountCode
   const chosen = override ?? suggestedCode ?? ''
@@ -78,7 +69,7 @@ export default function QuickEntry() {
     await commit(input, chosen)
     if (company) localStorage.setItem('ql-last-company', company)
     setToast(`已記一筆：${direction === 'in' ? '收入' : '支出'} ${formatTWD(amount)} → ${accName(chosen)}`)
-    setAmount(0); setDescription(''); setCounterparty(''); setOverride(null); setAi(null)
+    setAmount(0); setDescription(''); setCounterparty(''); setVoucherNo(''); setOverride(null); setAi(null)
     setTimeout(() => setToast(null), 4000)
   }
 
@@ -111,16 +102,9 @@ export default function QuickEntry() {
             <input value={description} onChange={(e) => setDescription(e.target.value)} className={inp} placeholder="例：中油加油、客戶尾款、辦公室租金" />
           </Field>
           <Field label="對象（廠商/客戶，選填）"><input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} className={inp} placeholder="例：春天廣告社" /></Field>
-          <Field label={accrual ? '（應計，不影響現金）' : '收/付款帳戶'}>
-            <select value={cashAccountCode} onChange={(e) => setCashAccountCode(e.target.value)} className={inp} disabled={accrual}>
-              {cashAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-            </select>
-          </Field>
+          <Field label="憑證編號（選填）"><input value={voucherNo} onChange={(e) => setVoucherNo(e.target.value)} className={inp} placeholder="發票/憑證號碼" /></Field>
         </div>
-        <label className="flex items-center gap-2 text-sm text-gray-600">
-          <input type="checkbox" checked={accrual} onChange={(e) => setAccrual(e.target.checked)} />
-          這是「{direction === 'in' ? '應收（還沒收到錢）' : '應付（還沒付錢）'}」——之後再收/付款
-        </label>
+        <p className="text-xs text-gray-400">此頁記的都是「現金收支」：收入＝借銀行現金、支出＝貸銀行現金。應收/應付請於匯入或明細處理。</p>
       </div>
 
       {previewEntry && (

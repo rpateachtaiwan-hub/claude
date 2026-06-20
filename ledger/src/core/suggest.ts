@@ -74,6 +74,7 @@ export function composeEntry(
     description: input.description,
     counterparty: input.counterparty,
     company: input.company,
+    voucherNo: input.voucherNo,
     source: input.accrual ? 'accrual' : 'cash',
     lines,
     settled: input.accrual ? false : true,

@@ -62,6 +62,8 @@ export interface QuickInput {
   counterparty?: string
   /** 所屬公司 */
   company?: string
+  /** 憑證編號 */
+  voucherNo?: string
   /** 錢的方向：收入帳(in) / 支出(out) */
   direction: 'in' | 'out'
   /** 使用的現金/銀行科目 code（現金基礎時）；應計時可省略 */

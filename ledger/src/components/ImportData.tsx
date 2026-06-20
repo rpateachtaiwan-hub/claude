@@ -63,7 +63,9 @@ function ImportTx() {
   const [company, setCompany] = useState('')
   const [cashCode, setCashCode] = useState('')
   const [busy, setBusy] = useState(false)
+  const [catOverride, setCatOverride] = useState<Record<string, string>>({})
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
+  const categoryAccounts = accounts.filter((a) => !a.isCash)
 
   // 收/付款帳戶選項：優先現金科目，無則列資產類
   const cashOptions = accounts.filter((a) => a.isCash).length ? accounts.filter((a) => a.isCash) : accounts.filter((a) => a.category === 'asset')
@@ -76,11 +78,21 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setRawRows(rows) }
+
+  // 檔案中出現的不重複「類別」值
+  const cats = React.useMemo(() => {
+    if (!rawRows || rawRows.length < 2) return []
+    const cCat = findCol(rawRows[0], '類別')
+    if (cCat < 0) return []
+    const set = new Set<string>()
+    for (const r of rawRows.slice(1)) { const t = (r[cCat] ?? '').trim(); if (t) set.add(t) }
+    return [...set]
+  }, [rawRows])
 
   const parsed = React.useMemo(
-    () => (rawRows && cashCode ? mapTxRows(rawRows, accounts, cashCode) : null),
-    [rawRows, accounts, cashCode],
+    () => (rawRows && cashCode ? mapTxRows(rawRows, accounts, cashCode, catOverride) : null),
+    [rawRows, accounts, cashCode, catOverride],
   )
   const needCompany = companies.length > 0 && !company
 
@@ -131,6 +143,29 @@ function ImportTx() {
       <FileBox onRows={handle} />
 
       {parsed?.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
+
+      {cats.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-3">
+          <div className="text-sm font-medium text-gray-700 mb-2">「類別」對應科目（可調整，套用到該類別所有交易）</div>
+          <div className="space-y-1.5 max-h-64 overflow-y-auto">
+            {cats.map((cat) => {
+              const auto = matchCategory(cat, accounts)
+              const cur = catOverride[cat] ?? auto ?? ''
+              return (
+                <div key={cat} className="flex items-center gap-2 text-sm">
+                  <span className="flex-1 truncate text-gray-700" title={cat}>{cat}</span>
+                  <span className="text-gray-300">→</span>
+                  <select value={cur} onChange={(e) => setCatOverride((p) => ({ ...p, [cat]: e.target.value }))}
+                    className={`w-56 border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand ${cur ? 'border-gray-300' : 'border-amber-300 bg-amber-50'}`}>
+                    <option value="">（待確認）</option>
+                    {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+                  </select>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {parsed && (parsed.totalRows > 0 || parsed.entries.length > 0) && (
         <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
@@ -193,7 +228,7 @@ function matchCategory(catText: string, accounts: Account[]): string | null {
   return sub?.code ?? null
 }
 
-function mapTxRows(rows: string[][], accounts: Account[], cashCode: string) {
+function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catOverride: Record<string, string> = {}) {
   const result = {
     entries: [] as JournalEntry[],
     error: null as string | null, totalRows: 0, skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0,
@@ -239,8 +274,8 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string) {
     const voucher = cVoucher >= 0 ? row[cVoucher] : ''
     const voucherNo = (direction === 'in' ? invNo || voucher : voucher || invNo) || undefined
 
-    // 科目：先用「類別」對應科目表；對不到 → 收入(未分類)/其他成本，並標記未分類
-    const matched = matchCategory(catText, accounts)
+    // 科目：先用使用者指定的「類別→科目」對應，其次自動比對科目表；都對不到 → 待確認
+    const matched = (catText && catOverride[catText]) || matchCategory(catText, accounts)
     const categoryCode = matched ?? (direction === 'in' ? UNCLASSIFIED_IN : UNCLASSIFIED_OUT)
     if (!matched) result.needsReviewCount++
 

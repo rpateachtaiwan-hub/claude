@@ -5,7 +5,7 @@
 
 import { create } from 'zustand'
 import { supabase, hasSupabase } from '../lib/supabase'
-import { DEFAULT_ACCOUNTS } from '../core/accounts'
+import { DEFAULT_ACCOUNTS, PLACEHOLDER_ACCOUNTS } from '../core/accounts'
 import { buildEntry } from '../core/engine'
 import { composeEntry, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
@@ -34,7 +34,9 @@ interface LedgerState extends PersistShape {
   /** 記一筆：以最終選定的非現金腳科目過帳 */
   commit: (input: QuickInput, chosenAccountCode: string) => Promise<JournalEntry>
   updateEntry: (entry: JournalEntry) => Promise<void>
+  updateEntriesBulk: (entries: JournalEntry[]) => Promise<void>
   deleteEntry: (id: string) => Promise<void>
+  deleteEntriesBulk: (ids: string[]) => Promise<void>
   addAccount: (a: Account) => Promise<void>
   deleteAccount: (code: string) => Promise<void>
   addCompany: (name: string) => Promise<void>
@@ -55,6 +57,12 @@ function loadAi(): AiConfig {
   } catch {
     return DEFAULT_AI
   }
+}
+
+/** 確保「待確認」等預設科目一定在清單中（避免顯示成代號） */
+function withPlaceholders(accs: Account[]): Account[] {
+  const codes = new Set(accs.map((a) => a.code))
+  return [...accs, ...PLACEHOLDER_ACCOUNTS.filter((p) => !codes.has(p.code))]
 }
 
 function loadLocal(): PersistShape | null {
@@ -88,7 +96,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
           supabase.from('companies').select('name').order('name'),
         ])
         if (!accRes.error && accRes.data) {
-          const accounts = (accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
+          const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
           const rules = (ruleRes.data?.length ? ruleRes.data.map((r) => r.data as Rule) : [])
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
           const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
@@ -104,7 +112,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
       ready: true,
       usingSupabase: false,
       aiConfig: loadAi(),
-      accounts: local?.accounts ?? DEFAULT_ACCOUNTS,
+      accounts: withPlaceholders(local?.accounts ?? DEFAULT_ACCOUNTS),
       rules: local?.rules ?? [],
       entries: local?.entries ?? [],
       companies: local?.companies ?? [],
@@ -135,10 +143,26 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
   },
 
+  updateEntriesBulk: async (updated) => {
+    const byId = new Map(updated.map((e) => [e.id, e]))
+    const entries = get().entries.map((e) => byId.get(e.id) ?? e)
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').upsert(updated.map((e) => ({ id: e.id, date: e.date, data: e })))
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
   deleteEntry: async (id) => {
     const entries = get().entries.filter((e) => e.id !== id)
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').delete().eq('id', id)
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  deleteEntriesBulk: async (ids) => {
+    const idset = new Set(ids)
+    const entries = get().entries.filter((e) => !idset.has(e.id))
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').delete().in('id', ids)
     else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
   },
 
