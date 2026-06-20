@@ -103,7 +103,7 @@ function ImportTx() {
       if (!code) return e // 判斷不出 → 維持待分類
       const input = deriveInput(e)
       return buildEntry({
-        ...composeEntry(input, code), id: e.id, company: e.company,
+        ...composeEntry(input, code, accounts), id: e.id, company: e.company,
         counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false,
       })
     })
@@ -263,7 +263,7 @@ function mapTxRows(rows: string[][], accounts: Account[]) {
 
     const input: QuickInput = { date, amount, description: desc, counterparty, direction, cashAccountCode: cashCode }
     try {
-      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode), counterpartyAccount, branch, voucherNo, needsReview: true }))
+      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode, accounts), counterpartyAccount, branch, voucherNo, needsReview: true }))
     } catch { /* skip */ }
   }
   result.unmatchedAccounts = [...unmatched]

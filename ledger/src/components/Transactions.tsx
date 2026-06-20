@@ -79,7 +79,7 @@ export default function Transactions() {
       const input = entryToInput(e, accounts)
       const r = await classifyWithGemini(input, accounts, aiConfig)
       if (r) {
-        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode), id: e.id, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
+        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode, accounts), id: e.id, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
         await updateEntry(rebuilt)
         ok++
       }
@@ -204,7 +204,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
         // 使用者已指定科目 → 解除待分類
         const stillUnclassified = categoryCode === '4999' || categoryCode === '6999'
         const rebuilt = buildEntry({
-          ...composeEntry(input, categoryCode), id: entry.id,
+          ...composeEntry(input, categoryCode, accounts), id: entry.id,
           counterpartyAccount: counterpartyAccount || undefined, branch: branch || undefined, voucherNo: voucherNo || undefined,
           needsReview: stillUnclassified ? entry.needsReview : false,
         })

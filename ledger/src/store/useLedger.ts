@@ -119,7 +119,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   commit: async (input, chosenAccountCode) => {
-    const draft = composeEntry(input, chosenAccountCode)
+    const draft = composeEntry(input, chosenAccountCode, get().accounts)
     const entry = buildEntry(draft) // 驗證借貸平衡
     const entries = [...get().entries, entry]
     set({ entries })

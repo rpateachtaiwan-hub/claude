@@ -32,21 +32,34 @@ export function categorySideOf(direction: 'in' | 'out'): Side {
   return direction === 'in' ? 'credit' : 'debit'
 }
 
-/** 另一腳科目：現金基礎=銀行/現金；應計=應收/應付。 */
-export function settleCodeOf(input: QuickInput): string {
-  return input.accrual
-    ? input.direction === 'in'
-      ? AR_ACCOUNT
-      : AP_ACCOUNT
-    : input.cashAccountCode ?? DEFAULT_CASH_ACCOUNT
+/** 另一腳科目：現金基礎=銀行/現金；應計=應收/應付。可傳入科目表以動態解析（科目代號可能被改）。 */
+export function settleCodeOf(input: QuickInput, accounts?: Account[]): string {
+  if (input.accrual) {
+    const cat = input.direction === 'in' ? 'asset' : 'liability'
+    const found = accounts?.find((a) => a.isOpenItem && a.category === cat)?.code
+    return found ?? (input.direction === 'in' ? AR_ACCOUNT : AP_ACCOUNT)
+  }
+  if (input.cashAccountCode && accounts?.some((a) => a.code === input.cashAccountCode)) return input.cashAccountCode
+  if (!accounts) return input.cashAccountCode ?? DEFAULT_CASH_ACCOUNT
+  if (accounts.some((a) => a.code === DEFAULT_CASH_ACCOUNT)) return DEFAULT_CASH_ACCOUNT
+  return input.cashAccountCode ?? accounts.find((a) => a.isCash)?.code ?? accounts.find((a) => a.category === 'asset')?.code ?? DEFAULT_CASH_ACCOUNT
+}
+
+/** 找出可用的預設分類科目（當寫死代號不存在時，改用科目表中第一個對應類別）。 */
+export function fallbackCategoryCode(direction: 'in' | 'out', accounts: Account[]): string {
+  const preferred = direction === 'in' ? DEFAULT_REVENUE : DEFAULT_EXPENSE
+  if (accounts.some((a) => a.code === preferred)) return preferred
+  const cat = direction === 'in' ? 'revenue' : 'expense'
+  return accounts.find((a) => a.category === cat && !a.isCash && !a.isOpenItem)?.code ?? preferred
 }
 
 /** 依輸入與指定的非現金腳科目，組出一張平衡傳票的內容（不含 id）。 */
 export function composeEntry(
   input: QuickInput,
   categoryCode: string,
+  accounts?: Account[],
 ): Omit<JournalEntry, 'id' | 'createdAt'> {
-  const settleCode = settleCodeOf(input)
+  const settleCode = settleCodeOf(input, accounts)
   const amount = input.amount
   const lines: EntryLine[] = []
   if (input.direction === 'in') {
@@ -74,11 +87,11 @@ export function suggest(input: QuickInput, rules: Rule[], accounts: Account[]): 
   const accByCode = new Map(accounts.map((a) => [a.code, a]))
   const matched = matchRule(input, rules)
 
-  const categoryCode = matched?.accountCode ?? (input.direction === 'in' ? DEFAULT_REVENUE : DEFAULT_EXPENSE)
+  const categoryCode = matched?.accountCode ?? fallbackCategoryCode(input.direction, accounts)
   const categoryAcc = accByCode.get(categoryCode)
   const categorySide: Side = categorySideOf(input.direction)
-  const settleCode = settleCodeOf(input)
-  const entry = composeEntry(input, categoryCode)
+  const settleCode = settleCodeOf(input, accounts)
+  const entry = composeEntry(input, categoryCode, accounts)
 
   const sideZh = categorySide === 'debit' ? '借方' : '貸方'
   const settleName = accByCode.get(settleCode)?.name ?? settleCode

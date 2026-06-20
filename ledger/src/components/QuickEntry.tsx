@@ -27,9 +27,17 @@ export default function QuickEntry() {
   const [ai, setAi] = useState<{ accountCode: string; reason: string } | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
 
-  const cashAccounts = accounts.filter((a) => a.isCash)
+  const cashAccountsRaw = accounts.filter((a) => a.isCash)
+  const cashAccounts = cashAccountsRaw.length ? cashAccountsRaw : accounts.filter((a) => a.category === 'asset')
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash && !a.isOpenItem)
+
+  // 科目表載入/變動後，若目前選的收付款帳戶不存在，改選第一個可用的
+  useEffect(() => {
+    if (cashAccounts.length && !cashAccounts.some((a) => a.code === cashAccountCode)) {
+      setCashAccountCode(cashAccounts[0].code)
+    }
+  }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const input: QuickInput = useMemo(
     () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, direction, cashAccountCode, accrual }),
@@ -55,7 +63,7 @@ export default function QuickEntry() {
 
   const suggestedCode = ai?.accountCode ?? fallback?.accountCode
   const chosen = override ?? suggestedCode ?? ''
-  const previewEntry = amount > 0 && chosen ? composeEntry(input, chosen) : null
+  const previewEntry = amount > 0 && chosen ? composeEntry(input, chosen, accounts) : null
   const corrected = override != null && !!suggestedCode && override !== suggestedCode
 
   const badge = aiLoading
