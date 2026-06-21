@@ -30,6 +30,8 @@ export interface EntryLine {
 /** 一張傳票（複式，借貸平衡） */
 export interface JournalEntry {
   id: string
+  /** 流水號（遞增整數，支援上兆筆） */
+  seq?: number
   date: string // YYYY-MM-DD
   description: string
   counterparty?: string

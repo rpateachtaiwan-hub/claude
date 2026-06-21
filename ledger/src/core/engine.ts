@@ -56,10 +56,12 @@ export function buildEntry(input: {
   company?: string
   needsReview?: boolean
   id?: string
+  seq?: number
 }): JournalEntry {
   assertBalanced(input.lines)
   return {
     id: input.id ?? newId(),
+    seq: input.seq,
     date: input.date,
     description: input.description,
     counterparty: input.counterparty,

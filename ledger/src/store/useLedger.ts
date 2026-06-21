@@ -48,6 +48,15 @@ interface LedgerState extends PersistShape {
   // 批次匯入
   addEntriesBulk: (entries: JournalEntry[]) => Promise<void>
   addAccountsBulk: (accounts: Account[]) => Promise<void>
+  /** 為尚無流水號的舊資料補編號（依日期、建立時間排序） */
+  backfillSeq: () => Promise<number>
+}
+
+/** 取得目前最大流水號（無資料則 0） */
+function maxSeq(entries: JournalEntry[]): number {
+  let m = 0
+  for (const e of entries) if (typeof e.seq === 'number' && e.seq > m) m = e.seq
+  return m
 }
 
 function loadAi(): AiConfig {
@@ -128,7 +137,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
 
   commit: async (input, chosenAccountCode) => {
     const draft = composeEntry(input, chosenAccountCode, get().accounts)
-    const entry = buildEntry(draft) // 驗證借貸平衡
+    const entry = buildEntry({ ...draft, seq: maxSeq(get().entries) + 1 }) // 驗證借貸平衡 + 流水號
     const entries = [...get().entries, entry]
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
@@ -201,7 +210,8 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   settle: async (itemId, amount, cashAccountCode, date) => {
     const item = computeOpenItems(get().entries, get().accounts).find((i) => i.id === itemId)
     if (!item) throw new Error('找不到未沖項目')
-    const entry = buildSettlement(item, { date, amount, cashAccountCode })
+    const base = buildSettlement(item, { date, amount, cashAccountCode })
+    const entry: JournalEntry = { ...base, seq: maxSeq(get().entries) + 1 }
     const entries = [...get().entries, entry]
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
@@ -209,10 +219,13 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   addEntriesBulk: async (newEntries) => {
-    const entries = [...get().entries, ...newEntries]
+    // 依序補上流水號（接續目前最大值）
+    let n = maxSeq(get().entries)
+    const stamped = newEntries.map((e) => ({ ...e, seq: e.seq ?? ++n }))
+    const entries = [...get().entries, ...stamped]
     set({ entries })
     if (get().usingSupabase) {
-      await supabase.from('entries').insert(newEntries.map((e) => ({ id: e.id, date: e.date, data: e })))
+      await supabase.from('entries').insert(stamped.map((e) => ({ id: e.id, date: e.date, data: e })))
     } else {
       saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
     }
@@ -228,5 +241,29 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     } else {
       saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
     }
+  },
+
+  backfillSeq: async () => {
+    const cur = get().entries
+    // 已有流水號者保留；未編號者依日期、建立時間排序後接續最大值補編
+    const need = cur.filter((e) => typeof e.seq !== 'number')
+    if (!need.length) return 0
+    need.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt ?? '') < (b.createdAt ?? '') ? -1 : 1))
+    let n = maxSeq(cur)
+    const seqById = new Map<string, number>()
+    for (const e of need) seqById.set(e.id, ++n)
+    const entries = cur.map((e) => (seqById.has(e.id) ? { ...e, seq: seqById.get(e.id)! } : e))
+    set({ entries })
+    if (get().usingSupabase) {
+      const updated = entries.filter((e) => seqById.has(e.id))
+      // 分批 upsert，避免單次過大
+      for (let i = 0; i < updated.length; i += 500) {
+        const chunk = updated.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
+    return need.length
   },
 }))

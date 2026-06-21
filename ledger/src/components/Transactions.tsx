@@ -7,7 +7,12 @@ import { formatTWD } from '../core/money'
 import { downloadCSV, toCSV } from '../lib/csv'
 import type { Account, JournalEntry, QuickInput } from '../core/types'
 
-type SortKey = 'date' | 'description' | 'amount'
+type SortKey = 'seq' | 'date' | 'description' | 'amount'
+
+/** 流水號顯示：補零至 7 位（可達千萬筆仍對齊；超過自動加長） */
+function fmtSeq(n?: number): string {
+  return typeof n === 'number' ? '#' + String(n).padStart(7, '0') : '—'
+}
 
 function entryToInput(e: JournalEntry, accounts: Account[]): QuickInput {
   const byCode = new Map(accounts.map((a) => [a.code, a]))
@@ -22,7 +27,7 @@ function entryToInput(e: JournalEntry, accounts: Account[]): QuickInput {
 }
 
 export default function Transactions() {
-  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies } = useLedger()
+  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies, backfillSeq } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash)
   const [q, setQ] = useState('')
@@ -61,7 +66,7 @@ export default function Transactions() {
       date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
       counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo,
       source, settled: source === 'accrual' ? false : source === 'cash' ? true : undefined,
-      id: e.id, needsReview: false,
+      id: e.id, seq: e.seq, needsReview: false,
       lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
     }))
   }, [accounts, updateEntry])
@@ -71,6 +76,12 @@ export default function Transactions() {
   }, [updateEntry])
 
   const reviewCount = entries.filter((e) => e.needsReview).length
+  const noSeqCount = entries.filter((e) => typeof e.seq !== 'number').length
+
+  async function onBackfill() {
+    const n = await backfillSeq()
+    alert(n ? `已為 ${n} 筆舊資料補上流水號。` : '所有交易都已經有流水號了。')
+  }
 
   const rows = useMemo(() => {
     const kw = q.trim().toLowerCase()
@@ -85,7 +96,8 @@ export default function Transactions() {
     })
     return [...filtered].sort((a, b) => {
       let r = 0
-      if (sortKey === 'date') r = a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+      if (sortKey === 'seq') r = (a.seq ?? 0) - (b.seq ?? 0)
+      else if (sortKey === 'date') r = a.date < b.date ? -1 : a.date > b.date ? 1 : 0
       else if (sortKey === 'description') r = a.description.localeCompare(b.description, 'zh-Hant')
       else r = amountOf(a) - amountOf(b)
       return asc ? r : -r
@@ -106,11 +118,11 @@ export default function Transactions() {
   function exportCsv() {
     const data = rows.map((e) => {
       const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
-      return [e.company ?? '', e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '',
+      return [e.seq ?? '', e.company ?? '', e.date, e.description, e.counterparty ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '',
         accName(dr.accountCode), accName(cr.accountCode), dr.debit,
         e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金', e.needsReview ? '待分類' : '']
     })
-    downloadCSV('交易明細', toCSV(['公司', '日期', '摘要', '對象', '對方帳號', '交易分行', '憑證編號', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
+    downloadCSV('交易明細', toCSV(['流水號', '公司', '日期', '摘要', '對象', '對方帳號', '交易分行', '憑證編號', '借方科目', '貸方科目', '金額', '類型', '狀態'], data))
   }
 
   const allVisibleSelected = rows.length > 0 && rows.every((e) => selected.has(e.id))
@@ -128,7 +140,7 @@ export default function Transactions() {
   async function bulkSetCategory(code: string) {
     const upd = entries.filter((e) => selected.has(e.id) && e.source !== 'settlement').map((e) => {
       const input = entryToInput(e, accounts)
-      return buildEntry({ ...composeEntry(input, code, accounts), id: e.id, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
+      return buildEntry({ ...composeEntry(input, code, accounts), id: e.id, seq: e.seq, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
     })
     await updateEntriesBulk(upd); clearSel()
   }
@@ -142,7 +154,7 @@ export default function Transactions() {
       const input = entryToInput(e, accounts)
       const r = await classifyWithGemini(input, accounts, aiConfig)
       if (r) {
-        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode, accounts), id: e.id, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
+        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode, accounts), id: e.id, seq: e.seq, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, needsReview: false })
         await updateEntry(rebuilt)
         ok++
       }
@@ -176,6 +188,11 @@ export default function Transactions() {
             {aiBusy ?? `用 Gemini 分類待分類`}
           </button>
         )}
+        {noSeqCount > 0 && (
+          <button onClick={onBackfill} className="px-3 py-2 rounded-lg bg-brand-soft text-brand-dark border border-brand-light/40 text-sm whitespace-nowrap hover:bg-brand-light/20" title="為匯入的舊資料補上流水號">
+            # 補編流水號 {noSeqCount}
+          </button>
+        )}
         <button onClick={exportCsv} className="px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap">⬇ 匯出 Excel</button>
       </div>
 
@@ -202,6 +219,7 @@ export default function Transactions() {
           <thead>
             <tr className="bg-gray-50 text-gray-500 text-xs">
               <th className="px-3 py-2.5 w-8"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} /></th>
+              <th className="px-3 py-2.5 text-left cursor-pointer select-none whitespace-nowrap" onClick={() => toggleSort('seq')}>流水號{arrow('seq')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('date')}>日期{arrow('date')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('description')}>摘要{arrow('description')}</th>
               <th className="px-3 py-2.5 text-left">借 / 貸</th>
@@ -210,12 +228,13 @@ export default function Transactions() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={6} className="px-3 py-10 text-center text-gray-400">{q || onlyReview ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-10 text-center text-gray-400">{q || onlyReview ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
             {pagedRows.map((e) => {
               const dr = e.lines.find((l) => l.debit > 0)!
               return (
                 <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${selected.has(e.id) ? 'bg-brand-soft/40' : e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
                   <td className="px-3 py-2.5 text-center"><input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} /></td>
+                  <td className="px-3 py-2.5 text-gray-400 tabular-nums whitespace-nowrap text-xs">{fmtSeq(e.seq)}</td>
                   <td className="px-3 py-2.5 text-gray-500"><DateCell e={e} onSet={setEntryDate} /></td>
                   <td className="px-3 py-2.5 text-gray-800">
                     {e.needsReview && <span className="mr-1 text-[10px] text-amber-700 bg-amber-100 rounded px-1 py-0.5 font-medium">⚠ 待分類</span>}
@@ -347,7 +366,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
         // 使用者已指定科目 → 解除待分類
         const stillUnclassified = categoryCode === '4999' || categoryCode === '6999'
         const rebuilt = buildEntry({
-          ...composeEntry(input, categoryCode, accounts), id: entry.id,
+          ...composeEntry(input, categoryCode, accounts), id: entry.id, seq: entry.seq,
           counterpartyAccount: counterpartyAccount || undefined, branch: branch || undefined, voucherNo: voucherNo || undefined,
           needsReview: stillUnclassified ? entry.needsReview : false,
         })
