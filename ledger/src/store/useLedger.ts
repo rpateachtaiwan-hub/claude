@@ -110,6 +110,8 @@ export const useLedger = create<LedgerState>()((set, get) => ({
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
           const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
           set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, entries, companies })
+          // 舊資料若無流水號，自動補編（一次性）
+          if (entries.some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
           return
         }
       } catch {
@@ -126,6 +128,8 @@ export const useLedger = create<LedgerState>()((set, get) => ({
       entries: local?.entries ?? [],
       companies: local?.companies ?? [],
     })
+    // 舊資料若無流水號，自動補編（一次性）
+    if ((local?.entries ?? []).some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
   },
 
   preview: (input) => suggest(input, [], get().accounts),
