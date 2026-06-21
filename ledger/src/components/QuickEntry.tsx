@@ -11,6 +11,7 @@ export default function QuickEntry() {
 
   const [date, setDate] = useState(today)
   const [direction, setDirection] = useState<'in' | 'out'>('out')
+  const [accrual, setAccrual] = useState(false)
   const [amount, setAmount] = useState(0)
   const [description, setDescription] = useState('')
   const [counterparty, setCounterparty] = useState('')
@@ -29,10 +30,10 @@ export default function QuickEntry() {
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash && !a.isOpenItem)
 
-  // 記一筆一律為現金收支（不指定帳戶，由系統選銀行現金科目）
+  // 現金收支：另一腳為銀行現金（系統自選）；應計：另一腳為應收/應付
   const input: QuickInput = useMemo(
-    () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, voucherNo: voucherNo || undefined, direction }),
-    [date, amount, description, counterparty, company, voucherNo, direction],
+    () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, voucherNo: voucherNo || undefined, direction, accrual }),
+    [date, amount, description, counterparty, company, voucherNo, direction, accrual],
   )
 
   const fallback = useMemo(() => (amount > 0 ? preview(input) : null), [input, amount, preview])
@@ -68,7 +69,8 @@ export default function QuickEntry() {
     if (amount <= 0 || !description || !chosen) return
     await commit(input, chosen)
     if (company) localStorage.setItem('ql-last-company', company)
-    setToast(`已記一筆：${direction === 'in' ? '收入' : '支出'} ${formatTWD(amount)} → ${accName(chosen)}`)
+    const typeZh = accrual ? (direction === 'in' ? '應收' : '應付') : direction === 'in' ? '收入' : '支出'
+    setToast(`已記一筆：${typeZh} ${formatTWD(amount)} → ${accName(chosen)}`)
     setAmount(0); setDescription(''); setCounterparty(''); setVoucherNo(''); setOverride(null); setAi(null)
     setTimeout(() => setToast(null), 4000)
   }
@@ -80,6 +82,17 @@ export default function QuickEntry() {
           className={`flex-1 py-2.5 rounded-lg text-sm font-medium ${direction === 'out' ? 'bg-accent text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>支出（付錢）</button>
         <button onClick={() => setDirection('in')}
           className={`flex-1 py-2.5 rounded-lg text-sm font-medium ${direction === 'in' ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>收入（收錢）</button>
+      </div>
+
+      <div className="flex gap-2">
+        <button onClick={() => setAccrual(false)}
+          className={`flex-1 py-2 rounded-lg text-sm ${!accrual ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
+          💵 現金收付（錢已收/付）
+        </button>
+        <button onClick={() => setAccrual(true)}
+          className={`flex-1 py-2 rounded-lg text-sm ${accrual ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
+          📋 {direction === 'in' ? '應收（客戶未付）' : '應付（尚未付款）'}
+        </button>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
@@ -104,7 +117,13 @@ export default function QuickEntry() {
           <Field label="對象（廠商/客戶，選填）"><input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} className={inp} placeholder="例：春天廣告社" /></Field>
           <Field label="憑證編號（選填）"><input value={voucherNo} onChange={(e) => setVoucherNo(e.target.value)} className={inp} placeholder="發票/憑證號碼" /></Field>
         </div>
-        <p className="text-xs text-gray-400">此頁記的都是「現金收支」：收入＝借銀行現金、支出＝貸銀行現金。應收/應付請於匯入或明細處理。</p>
+        <p className="text-xs text-gray-400">
+          {accrual
+            ? direction === 'in'
+              ? '應收：借「應收帳款」、貸收入科目。實際收款時，再到「沖銷」頁沖掉。'
+              : '應付：借費用/科目、貸「應付帳款」。實際付款時，再到「沖銷」頁沖掉。'
+            : '現金收支：收入＝借銀行現金、支出＝貸銀行現金。'}
+        </p>
       </div>
 
       {previewEntry && (
