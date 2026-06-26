@@ -218,7 +218,7 @@ export default function Transactions() {
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-gray-500 text-xs">
-              <th className="px-3 py-2.5 w-8"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} /></th>
+              <th className="px-3 py-2.5 w-10 text-center"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} className="w-5 h-5 align-middle accent-brand cursor-pointer" /></th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none whitespace-nowrap" onClick={() => toggleSort('seq')}>流水號{arrow('seq')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('date')}>日期{arrow('date')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('description')}>摘要{arrow('description')}</th>
@@ -233,7 +233,9 @@ export default function Transactions() {
               const dr = e.lines.find((l) => l.debit > 0)!
               return (
                 <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${selected.has(e.id) ? 'bg-brand-soft/40' : e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
-                  <td className="px-3 py-2.5 text-center"><input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} /></td>
+                  <td className="px-1 py-1 text-center cursor-pointer" onClick={() => toggleOne(e.id)}>
+                    <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleOne(e.id)} onClick={(ev) => ev.stopPropagation()} className="w-5 h-5 align-middle accent-brand cursor-pointer" />
+                  </td>
                   <td className="px-3 py-2.5 text-gray-400 tabular-nums whitespace-nowrap text-xs">{fmtSeq(e.seq)}</td>
                   <td className="px-3 py-2.5 text-gray-500"><DateCell e={e} onSet={setEntryDate} /></td>
                   <td className="px-3 py-2.5 text-gray-800">
