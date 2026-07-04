@@ -3,8 +3,9 @@ import { useLedger } from '../store/useLedger'
 import { balanceSheet, cashFlow, profitAndLoss, type Pnl } from '../core/reports'
 import { formatTWD } from '../core/money'
 import { downloadCSV, toCSV } from '../lib/csv'
+import Recon from './Recon'
 
-type Tab = 'pnl' | 'bs' | 'cf'
+type Tab = 'pnl' | 'bs' | 'cf' | 'recon'
 type Gran = 'all' | 'year' | 'month'
 
 export default function Reports() {
@@ -88,13 +89,15 @@ export default function Reports() {
   return (
     <div className="w-full p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        {([['pnl', '損益表'], ['bs', '資產負債表'], ['cf', '現金流量表']] as [Tab, string][]).map(([t, l]) => (
+        {([['pnl', '損益表'], ['bs', '資產負債表'], ['cf', '現金流量表'], ['recon', '銀行對帳']] as [Tab, string][]).map(([t, l]) => (
           <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === t ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>{l}</button>
         ))}
-        <button onClick={exportCsv} className="ml-auto px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">⬇ 匯出 Excel</button>
+        {tab !== 'recon' && <button onClick={exportCsv} className="ml-auto px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">⬇ 匯出 Excel</button>}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      {tab === 'recon' && <Recon />}
+
+      {tab !== 'recon' && <div className="flex flex-wrap items-center gap-2 text-sm">
         {companies.length > 0 && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}
             className="border border-gray-300 rounded px-2 py-1.5 font-medium">
@@ -124,9 +127,9 @@ export default function Reports() {
           <button onClick={() => setZoom(1)} className="px-2 h-7 rounded border border-gray-300 text-xs text-gray-600 hover:bg-gray-50 tabular-nums">{Math.round(zoom * 100)}%</button>
           <button onClick={() => setZoom((z) => Math.min(1.8, +(z + 0.1).toFixed(2)))} className="w-7 h-7 rounded border border-gray-300 text-gray-600 hover:bg-gray-50">＋</button>
         </div>
-      </div>
+      </div>}
 
-      <div style={{ ['zoom' as keyof React.CSSProperties]: zoom } as React.CSSProperties}>
+      {tab !== 'recon' && <div style={{ ['zoom' as keyof React.CSSProperties]: zoom } as React.CSSProperties}>
         {tab === 'pnl' && !matrix && (
           <Card title="損益表" subtitle={label}>
             <Section label="收入">{pnl.rows.filter((r) => r.category === 'revenue').map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
@@ -164,7 +167,7 @@ export default function Reports() {
             <Total name="期末現金餘額" amount={cf.endingCash} strong highlight />
           </Card>
         )}
-      </div>
+      </div>}
     </div>
   )
 }

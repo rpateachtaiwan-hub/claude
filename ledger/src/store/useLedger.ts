@@ -6,9 +6,10 @@
 import { create } from 'zustand'
 import { supabase, hasSupabase } from '../lib/supabase'
 import { DEFAULT_ACCOUNTS, PLACEHOLDER_ACCOUNTS } from '../core/accounts'
-import { buildEntry } from '../core/engine'
 import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
+import type { ReconPoint } from '../core/recon'
+import { buildEntry, newId } from '../core/engine'
 import type { AiConfig } from '../core/ai'
 import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
 
@@ -39,6 +40,10 @@ interface LedgerState extends PersistShape {
   ready: boolean
   usingSupabase: boolean
   aiConfig: AiConfig
+  /** 銀行對帳點（雲端存 rules 表、本機存獨立 key） */
+  reconPoints: ReconPoint[]
+  addReconPoint: (p: Omit<ReconPoint, 'id' | 'kind' | 'createdAt'>) => Promise<void>
+  deleteReconPoint: (id: string) => Promise<void>
 
   init: () => Promise<void>
   /** 離線/無金鑰時的預設建議（不含學習規則） */
@@ -88,6 +93,19 @@ function withPlaceholders(accs: Account[]): Account[] {
   return [...accs, ...PLACEHOLDER_ACCOUNTS.filter((p) => !codes.has(p.code))]
 }
 
+const LS_RECON = 'qing-ledger-recon'
+function loadReconLocal(): ReconPoint[] {
+  try {
+    const raw = localStorage.getItem(LS_RECON)
+    return raw ? (JSON.parse(raw) as ReconPoint[]) : []
+  } catch {
+    return []
+  }
+}
+function saveReconLocal(pts: ReconPoint[]) {
+  localStorage.setItem(LS_RECON, JSON.stringify(pts))
+}
+
 function loadLocal(): PersistShape | null {
   try {
     const raw = localStorage.getItem(LS_KEY)
@@ -106,8 +124,24 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   aiConfig: DEFAULT_AI,
   accounts: [],
   rules: [],
+  reconPoints: [],
   entries: [],
   companies: [],
+
+  addReconPoint: async (p) => {
+    const point: ReconPoint = { ...p, id: newId('RC'), kind: 'recon', createdAt: new Date().toISOString() }
+    const reconPoints = [...get().reconPoints, point]
+    set({ reconPoints })
+    if (get().usingSupabase) await supabase.from('rules').insert({ id: point.id, data: point })
+    else saveReconLocal(reconPoints)
+  },
+
+  deleteReconPoint: async (id) => {
+    const reconPoints = get().reconPoints.filter((r) => r.id !== id)
+    set({ reconPoints })
+    if (get().usingSupabase) await supabase.from('rules').delete().eq('id', id)
+    else saveReconLocal(reconPoints)
+  },
 
   init: async () => {
     if (hasSupabase) {
@@ -120,10 +154,13 @@ export const useLedger = create<LedgerState>()((set, get) => ({
         ])
         if (!accRes.error && accRes.data) {
           const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
-          const rules = (ruleRes.data?.length ? ruleRes.data.map((r) => r.data as Rule) : [])
+          // rules 表為通用 jsonb 儲存：kind==='recon' 者為對帳點，其餘為規則
+          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint)
+          const rules = ruleRows.filter((r): r is Rule => (r as ReconPoint).kind !== 'recon')
+          const reconPoints = ruleRows.filter((r): r is ReconPoint => (r as ReconPoint).kind === 'recon')
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
           const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
-          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, entries, companies })
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, entries, companies })
           // 舊資料若無流水號，自動補編（一次性）
           if (entries.some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
           return
@@ -139,6 +176,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
       aiConfig: loadAi(),
       accounts: withPlaceholders(local?.accounts ?? DEFAULT_ACCOUNTS),
       rules: local?.rules ?? [],
+      reconPoints: loadReconLocal(),
       entries: local?.entries ?? [],
       companies: local?.companies ?? [],
     })
