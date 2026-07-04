@@ -1,13 +1,23 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { downloadCSV, toCSV } from '../lib/csv'
+import { LIQUOR_PRESET_ACCOUNTS } from '../core/accounts'
 import type { Account, Category } from '../core/types'
 
 const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
 const catZh: Record<Category, string> = { asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用' }
 
 export default function Settings() {
-  const { accounts, addAccount, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
+  const { accounts, addAccount, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
+
+  async function applyPreset() {
+    const have = new Set(accounts.map((a) => a.code))
+    const toAdd = LIQUOR_PRESET_ACCOUNTS.filter((a) => !have.has(a.code))
+    if (!toAdd.length) { alert('建議科目表的科目都已存在，未新增任何科目。'); return }
+    if (!confirm(`將新增 ${toAdd.length} 個建議科目（不覆蓋你現有的同編號科目）。要套用嗎？`)) return
+    await addAccountsBulk(toAdd)
+    alert(`已新增 ${toAdd.length} 個科目。`)
+  }
   const [editing, setEditing] = useState<Account | null>(null)
   const [adding, setAdding] = useState(false)
   const [newCompany, setNewCompany] = useState('')
@@ -74,6 +84,7 @@ export default function Settings() {
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-bold text-gray-900">科目表</h2>
           <div className="flex gap-3">
+            <button onClick={applyPreset} className="text-sm text-brand hover:text-brand-dark">✦ 套用建議科目表（酒商）</button>
             <button onClick={() => downloadCSV('科目表', toCSV(['編號', '科目', '類別'], accounts.map((a) => [a.code, a.name, catZh[a.category]])))} className="text-sm text-gray-500 hover:text-gray-700">⬇ 匯出</button>
             <button onClick={() => setAdding(true)} className="text-sm text-brand hover:text-brand-dark">+ 新增科目</button>
           </div>

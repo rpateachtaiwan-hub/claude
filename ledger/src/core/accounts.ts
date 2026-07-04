@@ -47,3 +47,51 @@ export const DEFAULT_EXPENSE = '6199'
 export function accountMap(accounts: Account[]): Map<string, Account> {
   return new Map(accounts.map((a) => [a.code, a]))
 }
+
+// =============================================================================
+// 建議科目表（酒商 + 旅行社資金往來）起步版。
+// 以「套用/匯入」方式加入使用者科目表（不覆蓋既有 code），可再增修。
+// isCash：現金/銀行；isOpenItem：應收/應付（作為應計拆分的控制科目）。
+// =============================================================================
+export const LIQUOR_PRESET_ACCOUNTS: Account[] = [
+  // 資產
+  { code: '1101', name: '現金/零用金', category: 'asset', normalBalance: 'debit', isCash: true },
+  { code: '1102', name: '銀行存款-國泰(001035016976)', category: 'asset', normalBalance: 'debit', isCash: true },
+  { code: '1103', name: '銀行存款-台企銀', category: 'asset', normalBalance: 'debit', isCash: true },
+  { code: '1141', name: '應收帳款', category: 'asset', normalBalance: 'debit', isOpenItem: true },
+  { code: '1150', name: '暫付/代墊款', category: 'asset', normalBalance: 'debit' },
+  { code: '1180', name: '應收退稅款', category: 'asset', normalBalance: 'debit' },
+  // 負債
+  { code: '2101', name: '應付帳款', category: 'liability', normalBalance: 'credit', isOpenItem: true },
+  { code: '2140', name: '代扣稅款(各類所得扣繳)', category: 'liability', normalBalance: 'credit' },
+  { code: '2150', name: '應付薪資', category: 'liability', normalBalance: 'credit' },
+  { code: '2160', name: '應付勞健保', category: 'liability', normalBalance: 'credit' },
+  { code: '2201', name: '銀行借款-台企銀', category: 'liability', normalBalance: 'credit' },
+  { code: '2301', name: '股東往來-旅行社', category: 'liability', normalBalance: 'credit' },
+  { code: '2302', name: '股東往來-其他', category: 'liability', normalBalance: 'credit' },
+  // 權益
+  { code: '3101', name: '業主資本', category: 'equity', normalBalance: 'credit' },
+  // 收入
+  { code: '4101', name: '營業收入-信用卡', category: 'revenue', normalBalance: 'credit' },
+  { code: '4102', name: '營業收入-美國運通', category: 'revenue', normalBalance: 'credit' },
+  { code: '4103', name: '營業收入-電子支付(iCash/iPass)', category: 'revenue', normalBalance: 'credit' },
+  { code: '4104', name: '營業收入-現金銷貨', category: 'revenue', normalBalance: 'credit' },
+  { code: '4201', name: '利息收入', category: 'revenue', normalBalance: 'credit' },
+  { code: '4301', name: '其他收入', category: 'revenue', normalBalance: 'credit' },
+  { code: '4999', name: '待確認(收入)', category: 'revenue', normalBalance: 'credit' },
+  // 成本
+  { code: '5101', name: '營業成本-酒', category: 'expense', normalBalance: 'debit' },
+  // 費用
+  { code: '6101', name: '薪資費用', category: 'expense', normalBalance: 'debit' },
+  { code: '6102', name: '租金費用', category: 'expense', normalBalance: 'debit' },
+  { code: '6103', name: '勞健保費', category: 'expense', normalBalance: 'debit' },
+  { code: '6104', name: '勞工退休金', category: 'expense', normalBalance: 'debit' },
+  { code: '6105', name: '銀行手續費', category: 'expense', normalBalance: 'debit' },
+  { code: '6106', name: '水電費', category: 'expense', normalBalance: 'debit' },
+  { code: '6107', name: '運費/外送費', category: 'expense', normalBalance: 'debit' },
+  { code: '6108', name: '職工福利/禮金', category: 'expense', normalBalance: 'debit' },
+  { code: '6109', name: '會計/專業服務費', category: 'expense', normalBalance: 'debit' },
+  { code: '6110', name: '稅捐規費', category: 'expense', normalBalance: 'debit' },
+  { code: '6199', name: '雜費', category: 'expense', normalBalance: 'debit' },
+  { code: '6999', name: '待確認(支出)', category: 'expense', normalBalance: 'debit' },
+]

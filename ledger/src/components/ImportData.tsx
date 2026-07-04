@@ -1,12 +1,11 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
-import { buildEntry } from '../core/engine'
-import { composeEntry } from '../core/suggest'
-import { PLACEHOLDER_ACCOUNTS, UNCLASSIFIED_IN, UNCLASSIFIED_OUT } from '../core/accounts'
+import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
+import { rowToEntries, planRow, type RowInput, type RowPlan } from '../core/importMap'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
 import { fileToRows } from '../lib/xlsx'
-import type { Account, Category, JournalEntry, QuickInput } from '../core/types'
+import type { Account, Category, JournalEntry } from '../core/types'
 
 type Mode = 'tx' | 'accounts'
 
@@ -64,6 +63,7 @@ function ImportTx() {
   const [cashCode, setCashCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [catOverride, setCatOverride] = useState<Record<string, string>>({})
+  const [accrualOn, setAccrualOn] = useState(true)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash)
 
@@ -91,8 +91,8 @@ function ImportTx() {
   }, [rawRows])
 
   const parsed = React.useMemo(
-    () => (rawRows && cashCode ? mapTxRows(rawRows, accounts, cashCode, catOverride) : null),
-    [rawRows, accounts, cashCode, catOverride],
+    () => (rawRows && cashCode ? mapTxRows(rawRows, accounts, cashCode, catOverride, accrualOn) : null),
+    [rawRows, accounts, cashCode, catOverride, accrualOn],
   )
   const needCompany = companies.length > 0 && !company
 
@@ -104,7 +104,8 @@ function ImportTx() {
       const entries = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
       await addEntriesBulk(entries)
       const review = entries.filter((e) => e.needsReview).length
-      setDone(`已匯入 ${entries.length} 筆交易${company ? `（公司：${company}）` : ''}${review ? `，其中 ${review} 筆未對到科目（已暫列未分類，請到「明細」補上）` : '，已全部對到科目'}`)
+      const accr = parsed.accrualCount > 0 ? `，含 ${parsed.accrualCount} 筆跨期自動拆應計` : ''
+      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${review ? `；其中 ${review} 筆未對到科目（已暫列未分類，請到「明細」補上）` : '；已全部對到科目'}`)
       setRawRows(null)
     } finally { setBusy(false) }
   }
@@ -112,10 +113,18 @@ function ImportTx() {
   return (
     <div className="space-y-3">
       <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
-        上傳 Excel/CSV（<b>第一列需為標題</b>）。辨識欄位：<b>日期、內容/備註、收入、支出、類別、對方帳號、交易分行</b>。
+        上傳 Excel/CSV（<b>第一列需為標題</b>）。辨識欄位：<b>日期、內容/備註、收入、支出、類別、對方帳號、交易分行、發票/請款單號</b>。
         借貸以<b>所選銀行帳戶</b>為基準：有「收入」金額＝借銀行、有「支出」＝貸銀行。
-        科目優先用<b>「類別」欄</b>對應你科目表中的科目；對不到的，收入暫列<b>「收入(未分類)」</b>、支出暫列<b>「其他成本」</b>，於明細再調整（應收/應付也在明細手動改）。
+        科目優先用<b>「內容」關鍵字</b>智慧配對（其次「類別」欄），對不到的暫列<b>待確認</b>，於明細再調整。
       </div>
+
+      <label className="flex items-start gap-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg p-3">
+        <input type="checkbox" checked={accrualOn} onChange={(e) => setAccrualOn(e.target.checked)} className="mt-0.5 w-4 h-4 accent-brand" />
+        <span>
+          <b>自動拆分跨期應計（依內容期別代碼 YYMM）</b>
+          <span className="block text-xs text-gray-500 mt-0.5">例：6/1 付的「2604健保費」→ 在 4/30 認列應計、6/1 自動沖銷，使 4 月損益正確。同月份者維持現金入帳。可在下方預覽檢查「應計」標記。</span>
+        </span>
+      </label>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
@@ -169,40 +178,46 @@ function ImportTx() {
 
       {parsed && (parsed.totalRows > 0 || parsed.entries.length > 0) && (
         <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
-          讀到 <b>{parsed.totalRows}</b> 列 · 可匯入 <b className="text-brand">{parsed.entries.length}</b> 筆
+          讀到 <b>{parsed.totalRows}</b> 列 · 可匯入 <b className="text-brand">{parsed.importableRows}</b> 筆交易（共 {parsed.entries.length} 張分錄）
+          {parsed.accrualCount > 0 && <span className="text-brand-dark"> · 跨期應計 {parsed.accrualCount} 筆</span>}
           {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 未對到科目 {parsed.needsReviewCount} 筆</span>}
           {parsed.skippedNoAmount > 0 && <span> · 略過無金額 {parsed.skippedNoAmount} 列</span>}
           {parsed.skippedNoDate > 0 && <span className="text-amber-600"> · 略過日期無法辨識 {parsed.skippedNoDate} 列</span>}
         </div>
       )}
 
-      {parsed && parsed.entries.length > 0 && (
+      {parsed && parsed.rowResults.length > 0 && (
         <>
-          <div className="text-sm text-gray-600">預覽（顯示前 {Math.min(10, parsed.entries.length)} 筆）：</div>
+          <div className="text-sm text-gray-600">預覽（顯示前 {Math.min(20, parsed.rowResults.length)} 筆；標「應計」者會回到期別月份認列並自動沖銷）：</div>
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[720px] text-sm">
               <thead><tr className="bg-gray-50 text-gray-500 text-xs">
                 <th className="px-2 py-2 text-left">日期</th><th className="px-2 py-2 text-left">內容</th>
-                <th className="px-2 py-2 text-left">借</th><th className="px-2 py-2 text-left">貸</th><th className="px-2 py-2 text-right">金額</th>
+                <th className="px-2 py-2 text-left">借方</th><th className="px-2 py-2 text-left">貸方</th>
+                <th className="px-2 py-2 text-right">金額</th><th className="px-2 py-2 text-left">處理</th>
               </tr></thead>
               <tbody>
-                {parsed.entries.slice(0, 10).map((e) => {
-                  const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
-                  return (
-                    <tr key={e.id} className="border-t border-gray-100">
-                      <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{e.date}</td>
-                      <td className="px-2 py-1.5 text-gray-700">{e.description}</td>
-                      <td className="px-2 py-1.5 text-xs text-gray-600">{accName(dr.accountCode)}</td>
-                      <td className="px-2 py-1.5 text-xs text-gray-600">{accName(cr.accountCode)}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{formatTWD(dr.debit)}</td>
-                    </tr>
-                  )
-                })}
+                {parsed.rowResults.slice(0, 20).map((r, i) => (
+                  <tr key={i} className={`border-t border-gray-100 ${r.plan.review ? 'bg-amber-50/50' : ''}`}>
+                    <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{r.date}</td>
+                    <td className="px-2 py-1.5 text-gray-700">{r.desc}</td>
+                    <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.debitCode)}</td>
+                    <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.creditCode)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{formatTWD(r.amount)}</td>
+                    <td className="px-2 py-1.5 text-xs whitespace-nowrap">
+                      {r.plan.accrual
+                        ? <span className="text-brand-dark bg-brand-soft rounded px-1.5 py-0.5">應計 → {r.plan.accrualDate}</span>
+                        : r.plan.review
+                          ? <span className="text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">待確認</span>
+                          : <span className="text-gray-400">現金</span>}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
           <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
-            {busy ? '匯入中…' : `確認匯入 ${parsed.entries.length} 筆${company ? `到「${company}」` : ''}`}
+            {busy ? '匯入中…' : `確認匯入 ${parsed.importableRows} 筆交易${company ? `到「${company}」` : ''}`}
           </button>
         </>
       )}
@@ -228,10 +243,19 @@ function matchCategory(catText: string, accounts: Account[]): string | null {
   return sub?.code ?? null
 }
 
-function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catOverride: Record<string, string> = {}) {
+interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan }
+
+function cleanVoucher(s: string): string | undefined {
+  const t = (s ?? '').trim()
+  if (!t || t === '待補' || t === '無') return undefined
+  return t
+}
+
+function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catOverride: Record<string, string> = {}, accrualOn = true) {
   const result = {
     entries: [] as JournalEntry[],
-    error: null as string | null, totalRows: 0, skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0,
+    rowResults: [] as RowResult[],
+    error: null as string | null, totalRows: 0, importableRows: 0, skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0,
   }
   if (rows.length < 2) { result.error = '檔案需含標題列與至少一列資料。'; return result }
   const headers = rows[0]
@@ -241,14 +265,15 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catO
   const cCpAcct = findCol(headers, '對方帳號')
   const cBranch = findCol(headers, '交易分行', '分行')
   const cInvNo = findCol(headers, '收入發票號碼', '發票號碼', '發票')
-  const cVoucher = findCol(headers, '支出憑證類別', '憑證類別', '憑證編號', '憑證')
+  const cVoucher = findCol(headers, '支出請款單號', '請款單號', '請款單', '支出憑證類別', '憑證類別', '憑證編號', '憑證')
   const cIn = headers.findIndex((h) => ['存入金額', '收入'].includes(h.trim()) || h.includes('存入') || (h.includes('收入') && !h.includes('發票')))
-  const cOut = headers.findIndex((h) => ['提出金額', '支出'].includes(h.trim()) || h.includes('提出') || (h.includes('支出') && !h.includes('憑證')))
+  const cOut = headers.findIndex((h) => ['提出金額', '支出'].includes(h.trim()) || h.includes('提出') || (h.includes('支出') && !h.includes('憑證') && !h.includes('請款')))
   if (cDate < 0 || (cIn < 0 && cOut < 0)) {
     result.error = '找不到日期或收入/支出欄位，請確認標題列名稱。'
     return result
   }
 
+  const opts = { catOverride, matchCategory, accrualOn }
   let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
 
   for (const row of rows.slice(1)) {
@@ -270,19 +295,20 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catO
     const catText = cCat >= 0 ? (row[cCat] ?? '').trim() : ''
     const counterpartyAccount = cCpAcct >= 0 ? row[cCpAcct] || undefined : undefined
     const branch = cBranch >= 0 ? row[cBranch] || undefined : undefined
-    const invNo = cInvNo >= 0 ? row[cInvNo] : ''
-    const voucher = cVoucher >= 0 ? row[cVoucher] : ''
-    const voucherNo = (direction === 'in' ? invNo || voucher : voucher || invNo) || undefined
+    const invNo = cInvNo >= 0 ? cleanVoucher(row[cInvNo]) : undefined
+    const voucher = cVoucher >= 0 ? cleanVoucher(row[cVoucher]) : undefined
+    const voucherNo = direction === 'in' ? invNo || voucher : voucher || invNo
 
-    // 科目：先用使用者指定的「類別→科目」對應，其次自動比對科目表；都對不到 → 待確認
-    const matched = (catText && catOverride[catText]) || matchCategory(catText, accounts)
-    const categoryCode = matched ?? (direction === 'in' ? UNCLASSIFIED_IN : UNCLASSIFIED_OUT)
-    if (!matched) result.needsReviewCount++
-
-    const input: QuickInput = { date, amount, description: desc, counterparty: catText || undefined, direction, cashAccountCode: cashCode }
+    const rowInput: RowInput = { date, amount, direction, description: desc, catText: catText || undefined, counterpartyAccount, branch, voucherNo }
     try {
-      result.entries.push(buildEntry({ ...composeEntry(input, categoryCode, accounts), counterpartyAccount, branch, voucherNo, needsReview: !matched }))
-    } catch { /* skip */ }
+      const plan = planRow(rowInput, cashCode, accounts, opts)
+      const entries = rowToEntries(rowInput, cashCode, accounts, opts)
+      result.entries.push(...entries)
+      result.rowResults.push({ date, desc, amount, direction, plan })
+      result.importableRows++
+      if (plan.accrual) result.accrualCount++
+      if (plan.review) result.needsReviewCount++
+    } catch { /* skip 無法建立的列 */ }
   }
   return result
 }
