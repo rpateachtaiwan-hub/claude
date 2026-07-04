@@ -1,103 +1,61 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLedger } from '../store/useLedger'
-import { composeEntry } from '../core/suggest'
-import { classifyWithGemini } from '../core/ai'
 import { formatTWD } from '../core/money'
-import type { QuickInput } from '../core/types'
+import AccountCombo from './AccountCombo'
+
+const DEFAULT_COMPANY = '菸酒'
 
 export default function QuickEntry() {
-  const { accounts, companies, preview, commit, aiConfig } = useLedger()
+  const { accounts, companies, postJournal } = useLedger()
   const today = new Date().toISOString().slice(0, 10)
+  const sortedAccounts = useMemo(() => [...accounts].sort((a, b) => a.code.localeCompare(b.code)), [accounts])
+  const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
 
   const [date, setDate] = useState(today)
-  const [direction, setDirection] = useState<'in' | 'out'>('out')
-  const [accrual, setAccrual] = useState(false)
-  const [amount, setAmount] = useState(0)
+  const [company, setCompany] = useState(() => localStorage.getItem('ql-last-company') || DEFAULT_COMPANY)
   const [description, setDescription] = useState('')
-  const [counterparty, setCounterparty] = useState('')
+  const [debitCode, setDebitCode] = useState('')
+  const [creditCode, setCreditCode] = useState('')
+  const [amount, setAmount] = useState(0)
   const [voucherNo, setVoucherNo] = useState('')
-  const [company, setCompany] = useState(() => localStorage.getItem('ql-last-company') || '')
-  const [override, setOverride] = useState<string | null>(null)
+  const [note, setNote] = useState('')
   const [toast, setToast] = useState<string | null>(null)
-  const [ai, setAi] = useState<{ accountCode: string; reason: string } | null>(null)
-  const [aiLoading, setAiLoading] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
-  // 公司清單載入後，若尚未選擇則預設第一間
+  // 公司清單載入後，若目前選擇不在清單中，預設「菸酒」（若無則第一間）
   useEffect(() => {
-    if (!company && companies.length) setCompany(companies[0])
+    if (!companies.length) return
+    if (!companies.includes(company)) setCompany(companies.includes(DEFAULT_COMPANY) ? DEFAULT_COMPANY : companies[0])
   }, [companies]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
-  const categoryAccounts = accounts.filter((a) => !a.isCash && !a.isOpenItem)
-
-  // 現金收支：另一腳為銀行現金（系統自選）；應計：另一腳為應收/應付
-  const input: QuickInput = useMemo(
-    () => ({ date, amount, description, counterparty: counterparty || undefined, company: company || undefined, voucherNo: voucherNo || undefined, direction, accrual }),
-    [date, amount, description, counterparty, company, voucherNo, direction, accrual],
-  )
-
-  const fallback = useMemo(() => (amount > 0 ? preview(input) : null), [input, amount, preview])
-
-  // 改摘要/方向/對象時，清除手動選擇 → 重新跟隨建議
-  useEffect(() => { setOverride(null) }, [description, direction, counterparty])
-
-  // Gemini 判斷（有金鑰時）；debounce 避免每打一字就呼叫
-  useEffect(() => {
-    if (!aiConfig.enabled || amount <= 0 || !description.trim()) { setAi(null); return }
-    let cancelled = false
-    setAiLoading(true)
-    const t = setTimeout(async () => {
-      const r = await classifyWithGemini(input, accounts, aiConfig)
-      if (!cancelled) { setAi(r); setAiLoading(false) }
-    }, 600)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [description, counterparty, direction, amount, aiConfig, accounts]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const suggestedCode = ai?.accountCode ?? fallback?.accountCode
-  const chosen = override ?? suggestedCode ?? ''
-  const previewEntry = amount > 0 && chosen ? composeEntry(input, chosen, accounts) : null
-  const corrected = override != null && !!suggestedCode && override !== suggestedCode
-
-  const badge = aiLoading
-    ? { cls: 'bg-gray-200 text-gray-600', text: '✦ Gemini 判斷中…' }
-    : ai
-      ? { cls: 'bg-brand text-white', text: '✦ Gemini 建議' }
-      : { cls: 'bg-gray-200 text-gray-600', text: aiConfig.enabled ? '預設建議（Gemini 無回應）' : '預設建議' }
-  const reasonText = ai ? `Gemini：${ai.reason}` : fallback?.reason ?? ''
+  const canSubmit = amount > 0 && !!debitCode && !!creditCode && !!description.trim()
+  const sameAcct = debitCode && creditCode && debitCode === creditCode
 
   async function onSubmit() {
-    if (amount <= 0 || !description || !chosen) return
-    await commit(input, chosen)
-    if (company) localStorage.setItem('ql-last-company', company)
-    const typeZh = accrual ? (direction === 'in' ? '應收' : '應付') : direction === 'in' ? '收入' : '支出'
-    setToast(`已記一筆：${typeZh} ${formatTWD(amount)} → ${accName(chosen)}`)
-    setAmount(0); setDescription(''); setCounterparty(''); setVoucherNo(''); setOverride(null); setAi(null)
-    setTimeout(() => setToast(null), 4000)
+    setErr(null)
+    if (!canSubmit) { setErr('請填寫摘要、借方、貸方與金額。'); return }
+    if (sameAcct) { setErr('借方與貸方不可為同一科目。'); return }
+    try {
+      await postJournal({
+        date, company: company || undefined, description: description.trim(),
+        debitCode, creditCode, amount,
+        voucherNo: voucherNo.trim() || undefined, note: note.trim() || undefined,
+      })
+      if (company) localStorage.setItem('ql-last-company', company)
+      setToast(`已記一筆：借 ${accName(debitCode)} / 貸 ${accName(creditCode)}　${formatTWD(amount)}`)
+      setDescription(''); setDebitCode(''); setCreditCode(''); setAmount(0); setVoucherNo(''); setNote('')
+      setTimeout(() => setToast(null), 4000)
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
   }
 
   return (
     <div className="w-full p-4 sm:p-6 space-y-4">
-      <div className="flex gap-2">
-        <button onClick={() => setDirection('out')}
-          className={`flex-1 py-2.5 rounded-lg text-sm font-medium ${direction === 'out' ? 'bg-accent text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>支出（付錢）</button>
-        <button onClick={() => setDirection('in')}
-          className={`flex-1 py-2.5 rounded-lg text-sm font-medium ${direction === 'in' ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>收入（收錢）</button>
-      </div>
-
-      <div className="flex gap-2">
-        <button onClick={() => setAccrual(false)}
-          className={`flex-1 py-2 rounded-lg text-sm ${!accrual ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
-          💵 現金收付（錢已收/付）
-        </button>
-        <button onClick={() => setAccrual(true)}
-          className={`flex-1 py-2 rounded-lg text-sm ${accrual ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>
-          📋 {direction === 'in' ? '應收（客戶未付）' : '應付（尚未付款）'}
-        </button>
-      </div>
-
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="公司" wide>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <Field label="日期">
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp} />
+          </Field>
+          <Field label="公司">
             {companies.length ? (
               <select value={company} onChange={(e) => setCompany(e.target.value)} className={inp}>
                 {companies.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -106,67 +64,51 @@ export default function QuickEntry() {
               <p className="text-xs text-amber-600">尚未建立公司，請先到「設定 → 公司」新增。</p>
             )}
           </Field>
-          <Field label="日期"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp} /></Field>
+          <Field label="摘要" wide>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} className={inp} placeholder="這筆交易的說明" />
+          </Field>
+          <Field label="借方科目">
+            <AccountCombo accounts={sortedAccounts} value={debitCode} onChange={setDebitCode} placeholder="搜尋借方科目…" />
+          </Field>
+          <Field label="貸方科目">
+            <AccountCombo accounts={sortedAccounts} value={creditCode} onChange={setCreditCode} placeholder="搜尋貸方科目…" />
+          </Field>
           <Field label="金額">
-            <input type="number" value={amount || ''} min={0} placeholder="0" autoFocus
-              onChange={(e) => setAmount(Math.floor(Number(e.target.value) || 0))} className={`${inp} text-right text-lg font-semibold`} />
+            <input type="number" value={amount || ''} min={0} placeholder="0"
+              onChange={(e) => setAmount(Math.floor(Number(e.target.value) || 0))} className={`${inp} text-right font-semibold`} />
           </Field>
-          <Field label="摘要（買了什麼 / 收什麼錢）" wide>
-            <input value={description} onChange={(e) => setDescription(e.target.value)} className={inp} placeholder="例：中油加油、客戶尾款、辦公室租金" />
+          <Field label="憑證編號（選填）">
+            <input value={voucherNo} onChange={(e) => setVoucherNo(e.target.value)} className={inp} placeholder="發票/憑證號碼" />
           </Field>
-          <Field label="對象（廠商/客戶，選填）"><input value={counterparty} onChange={(e) => setCounterparty(e.target.value)} className={inp} placeholder="例：春天廣告社" /></Field>
-          <Field label="憑證編號（選填）"><input value={voucherNo} onChange={(e) => setVoucherNo(e.target.value)} className={inp} placeholder="發票/憑證號碼" /></Field>
+          <Field label="備註（選填）" wide>
+            <input value={note} onChange={(e) => setNote(e.target.value)} className={inp} placeholder="補充說明" />
+          </Field>
         </div>
-        <p className="text-xs text-gray-400">
-          {accrual
-            ? direction === 'in'
-              ? '應收：借「應收帳款」、貸收入科目。實際收款時，再到「沖銷」頁沖掉。'
-              : '應付：借費用/科目、貸「應付帳款」。實際付款時，再到「沖銷」頁沖掉。'
-            : '現金收支：收入＝借銀行現金、支出＝貸銀行現金。'}
-        </p>
-      </div>
 
-      {previewEntry && (
-        <div className="bg-brand-soft border border-brand-light/40 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm">
-            <span className={`px-2 py-0.5 rounded-full text-[11px] ${badge.cls}`}>{badge.text}</span>
-            <span className="text-gray-600">{reasonText}</span>
-          </div>
+        {sameAcct && <p className="text-xs text-accent">借方與貸方不可為同一科目。</p>}
 
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">分類科目（不對的話直接改）</label>
-            <select value={chosen} onChange={(e) => setOverride(e.target.value)}
-              className={`${inp} ${corrected ? 'ring-1 ring-accent' : ''}`}>
-              {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}（{catZh(a.category)}）</option>)}
-            </select>
-          </div>
-
-          <table className="w-full text-sm bg-white rounded-lg overflow-hidden">
-            <thead><tr className="text-gray-400 text-xs border-b"><th className="py-1.5 px-2 text-left">科目</th><th className="py-1.5 px-2 text-right">借方</th><th className="py-1.5 px-2 text-right">貸方</th></tr></thead>
+        {canSubmit && !sameAcct && (
+          <table className="w-full text-sm bg-brand-soft rounded-lg overflow-hidden">
+            <thead><tr className="text-gray-400 text-xs border-b border-brand-light/30"><th className="py-1.5 px-2 text-left">科目</th><th className="py-1.5 px-2 text-right">借方</th><th className="py-1.5 px-2 text-right">貸方</th></tr></thead>
             <tbody>
-              {previewEntry.lines.map((l, i) => (
-                <tr key={i} className="border-b border-gray-50">
-                  <td className="py-1.5 px-2 text-gray-700">{accName(l.accountCode)}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums">{l.debit ? formatTWD(l.debit) : ''}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums">{l.credit ? formatTWD(l.credit) : ''}</td>
-                </tr>
-              ))}
+              <tr className="border-b border-white/60"><td className="py-1.5 px-2 text-gray-700">{accName(debitCode)}</td><td className="py-1.5 px-2 text-right tabular-nums">{formatTWD(amount)}</td><td></td></tr>
+              <tr><td className="py-1.5 px-2 text-gray-700">{accName(creditCode)}</td><td></td><td className="py-1.5 px-2 text-right tabular-nums">{formatTWD(amount)}</td></tr>
             </tbody>
           </table>
+        )}
 
-          <button onClick={onSubmit} className="w-full py-2.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">確認記帳</button>
-        </div>
-      )}
+        {err && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{err}</div>}
+
+        <button onClick={onSubmit} disabled={!canSubmit || !!sameAcct}
+          className="w-full py-2.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">確認記帳</button>
+      </div>
 
       {toast && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">{toast}</div>}
     </div>
   )
 }
 
-function catZh(c: string) {
-  return ({ asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用' } as Record<string, string>)[c] ?? c
-}
 function Field({ label, children, wide }: { label: string; children: React.ReactNode; wide?: boolean }) {
-  return <div className={wide ? 'col-span-2' : ''}><label className="block text-xs text-gray-500 mb-1">{label}</label>{children}</div>
+  return <div className={wide ? 'sm:col-span-2' : ''}><label className="block text-xs text-gray-500 mb-1">{label}</label>{children}</div>
 }
 const inp = 'w-full border border-gray-300 rounded px-2.5 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand'

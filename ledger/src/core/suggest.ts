@@ -8,7 +8,21 @@
 // =============================================================================
 
 import { AP_ACCOUNT, AR_ACCOUNT, DEFAULT_CASH_ACCOUNT, DEFAULT_EXPENSE, DEFAULT_REVENUE } from './accounts'
-import type { Account, EntryLine, JournalEntry, QuickInput, Rule, Side, Suggestion } from './types'
+import type { Account, EntryLine, EntrySource, JournalEntry, QuickInput, Rule, Side, Suggestion } from './types'
+
+/** 依借/貸兩腳科目判斷傳票性質：含現金→現金；含應收/應付→應計；否則一般轉帳。 */
+export function sourceFromLegs(
+  debitCode: string,
+  creditCode: string,
+  accounts: Account[],
+): { source: EntrySource; settled?: boolean } {
+  const byCode = new Map(accounts.map((a) => [a.code, a]))
+  const isCash = (c: string) => byCode.get(c)?.isCash
+  const isOpen = (c: string) => byCode.get(c)?.isOpenItem
+  if (isCash(debitCode) || isCash(creditCode)) return { source: 'cash', settled: true }
+  if (isOpen(debitCode) || isOpen(creditCode)) return { source: 'accrual', settled: false }
+  return { source: 'manual' }
+}
 
 function haystack(input: QuickInput): string {
   return `${input.counterparty ?? ''} ${input.description ?? ''}`.toLowerCase()

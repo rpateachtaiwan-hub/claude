@@ -53,6 +53,7 @@ export function buildEntry(input: {
   counterpartyAccount?: string
   branch?: string
   voucherNo?: string
+  note?: string
   company?: string
   needsReview?: boolean
   id?: string
@@ -73,6 +74,7 @@ export function buildEntry(input: {
     counterpartyAccount: input.counterpartyAccount,
     branch: input.branch,
     voucherNo: input.voucherNo,
+    note: input.note,
     needsReview: input.needsReview,
     createdAt: new Date().toISOString(),
   }

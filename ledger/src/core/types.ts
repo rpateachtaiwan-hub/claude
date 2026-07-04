@@ -49,6 +49,8 @@ export interface JournalEntry {
   branch?: string
   /** 憑證編號（發票號碼 / 憑證類別） */
   voucherNo?: string
+  /** 備註（自由文字） */
+  note?: string
   /** 無法辨識科目、待人工/AI 補分類 */
   needsReview?: boolean
   createdAt?: string

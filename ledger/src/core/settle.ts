@@ -10,6 +10,10 @@ export interface OpenItem {
   id: string // = 應計傳票 id
   type: 'AR' | 'AP'
   controlCode: string
+  /** 原始應計傳票的借方科目 code */
+  debitCode: string
+  /** 原始應計傳票的貸方科目 code */
+  creditCode: string
   date: string
   description: string
   counterparty?: string
@@ -45,8 +49,13 @@ export function openItems(entries: JournalEntry[], accounts: Account[]): OpenIte
     const settled = settledByTarget.get(e.id) ?? 0
     const remaining = amount - settled
     if (remaining <= 0) continue
+    const debitLine = e.lines.find((l) => l.debit > 0)
+    const creditLine = e.lines.find((l) => l.credit > 0)
     items.push({
-      id: e.id, type, controlCode: control.accountCode, date: e.date,
+      id: e.id, type, controlCode: control.accountCode,
+      debitCode: debitLine?.accountCode ?? control.accountCode,
+      creditCode: creditLine?.accountCode ?? control.accountCode,
+      date: e.date,
       description: e.description, counterparty: e.counterparty, company: e.company, amount, settled, remaining,
     })
   }

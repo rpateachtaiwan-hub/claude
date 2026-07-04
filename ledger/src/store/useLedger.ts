@@ -7,7 +7,7 @@ import { create } from 'zustand'
 import { supabase, hasSupabase } from '../lib/supabase'
 import { DEFAULT_ACCOUNTS, PLACEHOLDER_ACCOUNTS } from '../core/accounts'
 import { buildEntry } from '../core/engine'
-import { composeEntry, suggest } from '../core/suggest'
+import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
 import type { AiConfig } from '../core/ai'
 import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
@@ -23,6 +23,18 @@ interface PersistShape {
   companies: string[]
 }
 
+/** 日記帳輸入：直接指定借/貸科目與金額 */
+export interface JournalInput {
+  date: string
+  company?: string
+  description: string
+  debitCode: string
+  creditCode: string
+  amount: number
+  voucherNo?: string
+  note?: string
+}
+
 interface LedgerState extends PersistShape {
   ready: boolean
   usingSupabase: boolean
@@ -33,6 +45,8 @@ interface LedgerState extends PersistShape {
   preview: (input: QuickInput) => Suggestion
   /** 記一筆：以最終選定的非現金腳科目過帳 */
   commit: (input: QuickInput, chosenAccountCode: string) => Promise<JournalEntry>
+  /** 日記帳：直接指定借/貸科目與金額過帳 */
+  postJournal: (j: JournalInput) => Promise<JournalEntry>
   updateEntry: (entry: JournalEntry) => Promise<void>
   updateEntriesBulk: (entries: JournalEntry[]) => Promise<void>
   deleteEntry: (id: string) => Promise<void>
@@ -142,6 +156,30 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   commit: async (input, chosenAccountCode) => {
     const draft = composeEntry(input, chosenAccountCode, get().accounts)
     const entry = buildEntry({ ...draft, seq: maxSeq(get().entries) + 1 }) // 驗證借貸平衡 + 流水號
+    const entries = [...get().entries, entry]
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    return entry
+  },
+
+  postJournal: async (j) => {
+    const accounts = get().accounts
+    const { source, settled } = sourceFromLegs(j.debitCode, j.creditCode, accounts)
+    const entry = buildEntry({
+      date: j.date,
+      description: j.description,
+      company: j.company,
+      voucherNo: j.voucherNo,
+      note: j.note,
+      source,
+      settled,
+      seq: maxSeq(get().entries) + 1,
+      lines: [
+        { accountCode: j.debitCode, debit: j.amount, credit: 0 },
+        { accountCode: j.creditCode, debit: 0, credit: j.amount },
+      ],
+    })
     const entries = [...get().entries, entry]
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })

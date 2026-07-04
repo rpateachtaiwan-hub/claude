@@ -13,7 +13,7 @@ import LoginPage from './components/LoginPage'
 
 type Tab = 'entry' | 'settle' | 'list' | 'reports' | 'import' | 'settings'
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'entry', label: '記一筆' },
+  { key: 'entry', label: '日記帳' },
   { key: 'settle', label: '沖銷' },
   { key: 'list', label: '明細' },
   { key: 'reports', label: '報表' },
