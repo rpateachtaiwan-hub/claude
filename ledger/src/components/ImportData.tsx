@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
-import { rowToEntries, planRow, type RowInput, type RowPlan } from '../core/importMap'
+import { rowToEntries, planRow, existingDupKeys, consumeDup, type RowInput, type RowPlan } from '../core/importMap'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
 import { fileToRows } from '../lib/xlsx'
@@ -56,7 +56,7 @@ function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void 
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, companies, addEntriesBulk, addAccountsBulk } = useLedger()
+  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk } = useLedger()
   const [rawRows, setRawRows] = useState<string[][] | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [company, setCompany] = useState('')
@@ -64,6 +64,7 @@ function ImportTx() {
   const [busy, setBusy] = useState(false)
   const [catOverride, setCatOverride] = useState<Record<string, string>>({})
   const [accrualOn, setAccrualOn] = useState(true)
+  const [dedupOn, setDedupOn] = useState(true)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash)
 
@@ -91,8 +92,14 @@ function ImportTx() {
   }, [rawRows])
 
   const parsed = React.useMemo(
-    () => (rawRows && cashCode ? mapTxRows(rawRows, accounts, cashCode, catOverride, accrualOn) : null),
-    [rawRows, accounts, cashCode, catOverride, accrualOn],
+    () => (rawRows && cashCode
+      ? mapTxRows(rawRows, accounts, cashCode, {
+          catOverride, accrualOn,
+          existingKeys: dedupOn ? existingDupKeys(entries) : undefined,
+          company: company || undefined,
+        })
+      : null),
+    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company],
   )
   const needCompany = companies.length > 0 && !company
 
@@ -105,7 +112,8 @@ function ImportTx() {
       await addEntriesBulk(entries)
       const review = entries.filter((e) => e.needsReview).length
       const accr = parsed.accrualCount > 0 ? `，含 ${parsed.accrualCount} 筆跨期自動拆應計` : ''
-      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${review ? `；其中 ${review} 筆未對到科目（已暫列未分類，請到「明細」補上）` : '；已全部對到科目'}`)
+      const dup = parsed.duplicateCount > 0 ? `；略過已存在 ${parsed.duplicateCount} 筆` : ''
+      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}`)
       setRawRows(null)
     } finally { setBusy(false) }
   }
@@ -118,13 +126,22 @@ function ImportTx() {
         科目優先用<b>「內容」關鍵字</b>智慧配對（其次「類別」欄），對不到的暫列<b>待確認</b>，於明細再調整。
       </div>
 
-      <label className="flex items-start gap-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg p-3">
-        <input type="checkbox" checked={accrualOn} onChange={(e) => setAccrualOn(e.target.checked)} className="mt-0.5 w-4 h-4 accent-brand" />
-        <span>
-          <b>自動拆分跨期應計（依內容期別代碼 YYMM）</b>
-          <span className="block text-xs text-gray-500 mt-0.5">例：6/1 付的「2604健保費」→ 在 4/30 認列應計、6/1 自動沖銷，使 4 月損益正確。同月份者維持現金入帳。可在下方預覽檢查「應計」標記。</span>
-        </span>
-      </label>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label className="flex items-start gap-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg p-3">
+          <input type="checkbox" checked={accrualOn} onChange={(e) => setAccrualOn(e.target.checked)} className="mt-0.5 w-4 h-4 accent-brand" />
+          <span>
+            <b>自動拆分跨期應計</b>
+            <span className="block text-xs text-gray-500 mt-0.5">支援「2604健保費」「月結-12月車資」「2512薪資」等；月份早於付款月 → 在該月月底認列、付款日自動沖銷。「1-4月」等區間標待確認不自動拆。</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-lg p-3">
+          <input type="checkbox" checked={dedupOn} onChange={(e) => setDedupOn(e.target.checked)} className="mt-0.5 w-4 h-4 accent-brand" />
+          <span>
+            <b>略過系統已有的相同交易（防重複匯入）</b>
+            <span className="block text-xs text-gray-500 mt-0.5">依 公司＋日期＋金額＋摘要 按「筆數」比對：檔案 4 筆、系統已有 1 筆 → 只補 3 筆。同日同額的合法重複不會被誤刪。</span>
+          </span>
+        </label>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
@@ -180,42 +197,27 @@ function ImportTx() {
         <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3">
           讀到 <b>{parsed.totalRows}</b> 列 · 可匯入 <b className="text-brand">{parsed.importableRows}</b> 筆交易（共 {parsed.entries.length} 張分錄）
           {parsed.accrualCount > 0 && <span className="text-brand-dark"> · 跨期應計 {parsed.accrualCount} 筆</span>}
-          {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 未對到科目 {parsed.needsReviewCount} 筆</span>}
+          {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 待確認 {parsed.needsReviewCount} 筆</span>}
+          {parsed.duplicateCount > 0 && <span className="text-gray-500"> · 已存在略過 {parsed.duplicateCount} 筆</span>}
           {parsed.skippedNoAmount > 0 && <span> · 略過無金額 {parsed.skippedNoAmount} 列</span>}
           {parsed.skippedNoDate > 0 && <span className="text-amber-600"> · 略過日期無法辨識 {parsed.skippedNoDate} 列</span>}
         </div>
       )}
 
+      {parsed?.balance && (
+        <div className={`text-sm rounded-lg p-3 border ${parsed.balance.ok ? 'text-green-700 bg-green-50 border-green-200' : 'text-red-700 bg-red-50 border-red-200'}`}>
+          {parsed.balance.ok
+            ? <>✓ 餘額勾稽相符：累計收支 ＝ 檔內最後餘額 {formatTWD(parsed.balance.expected)}，解析無漏列（餘額欄中途停填者，其後列不列入勾稽）。</>
+            : <>⚠ 餘額勾稽不符：計算值 {formatTWD(parsed.balance.computed)} ≠ 檔內最後餘額 {formatTWD(parsed.balance.expected)}（差 {formatTWD(parsed.balance.computed - parsed.balance.expected)}）。可能有列解析錯誤，建議先檢查再匯入。</>}
+        </div>
+      )}
+
       {parsed && parsed.rowResults.length > 0 && (
         <>
-          <div className="text-sm text-gray-600">預覽（顯示前 {Math.min(20, parsed.rowResults.length)} 筆；標「應計」者會回到期別月份認列並自動沖銷）：</div>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead><tr className="bg-gray-50 text-gray-500 text-xs">
-                <th className="px-2 py-2 text-left">日期</th><th className="px-2 py-2 text-left">內容</th>
-                <th className="px-2 py-2 text-left">借方</th><th className="px-2 py-2 text-left">貸方</th>
-                <th className="px-2 py-2 text-right">金額</th><th className="px-2 py-2 text-left">處理</th>
-              </tr></thead>
-              <tbody>
-                {parsed.rowResults.slice(0, 20).map((r, i) => (
-                  <tr key={i} className={`border-t border-gray-100 ${r.plan.review ? 'bg-amber-50/50' : ''}`}>
-                    <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{r.date}</td>
-                    <td className="px-2 py-1.5 text-gray-700">{r.desc}</td>
-                    <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.debitCode)}</td>
-                    <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.creditCode)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{formatTWD(r.amount)}</td>
-                    <td className="px-2 py-1.5 text-xs whitespace-nowrap">
-                      {r.plan.accrual
-                        ? <span className="text-brand-dark bg-brand-soft rounded px-1.5 py-0.5">應計 → {r.plan.accrualDate}</span>
-                        : r.plan.review
-                          ? <span className="text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">待確認</span>
-                          : <span className="text-gray-400">現金</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} />
+          <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} />
+          <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} />
+          <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} />
           <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
             {busy ? '匯入中…' : `確認匯入 ${parsed.importableRows} 筆交易${company ? `到「${company}」` : ''}`}
           </button>
@@ -223,6 +225,43 @@ function ImportTx() {
       )}
       {parsed && parsed.entries.length === 0 && !parsed.error && <div className="text-sm text-gray-500">這個檔案沒有可匯入的資料列。</div>}
       {done && <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">{done}</div>}
+    </div>
+  )
+}
+
+function PreviewSection({ title, rows, accName, max }: { title: string; rows: RowResult[]; accName: (c: string) => string; max: number }) {
+  if (!rows.length) return null
+  const shown = rows.slice(0, max)
+  return (
+    <div className="space-y-1">
+      <div className="text-sm text-gray-600 font-medium">{title}</div>
+      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto max-h-72 overflow-y-auto">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead><tr className="bg-gray-50 text-gray-500 text-xs sticky top-0">
+            <th className="px-2 py-2 text-left">日期</th><th className="px-2 py-2 text-left">內容</th>
+            <th className="px-2 py-2 text-left">借方</th><th className="px-2 py-2 text-left">貸方</th>
+            <th className="px-2 py-2 text-right">金額</th><th className="px-2 py-2 text-left">處理</th>
+          </tr></thead>
+          <tbody>
+            {shown.map((r, i) => (
+              <tr key={i} className={`border-t border-gray-100 ${r.status === 'review' ? 'bg-amber-50/50' : r.status === 'dup' ? 'opacity-50' : ''}`}>
+                <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{r.date}</td>
+                <td className="px-2 py-1.5 text-gray-700">{r.desc}</td>
+                <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.debitCode)}</td>
+                <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.creditCode)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{formatTWD(r.amount)}</td>
+                <td className="px-2 py-1.5 text-xs whitespace-nowrap">
+                  {r.status === 'accrual' && <span className="text-brand-dark bg-brand-soft rounded px-1.5 py-0.5">應計 → {r.plan.accrualDate}</span>}
+                  {r.status === 'review' && <span className="text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">待確認</span>}
+                  {r.status === 'dup' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">已存在</span>}
+                  {r.status === 'cash' && <span className="text-gray-400">現金</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > max && <div className="text-xs text-gray-400">…其餘 {rows.length - max} 筆未顯示</div>}
     </div>
   )
 }
@@ -243,7 +282,16 @@ function matchCategory(catText: string, accounts: Account[]): string | null {
   return sub?.code ?? null
 }
 
-interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan }
+type RowStatus = 'cash' | 'accrual' | 'review' | 'dup'
+interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus }
+
+interface MapOpts {
+  catOverride?: Record<string, string>
+  accrualOn?: boolean
+  /** 系統既有交易鍵值（次數式重複偵測用）；undefined = 不偵測 */
+  existingKeys?: Map<string, number>
+  company?: string
+}
 
 function cleanVoucher(s: string): string | undefined {
   const t = (s ?? '').trim()
@@ -251,11 +299,14 @@ function cleanVoucher(s: string): string | undefined {
   return t
 }
 
-function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catOverride: Record<string, string> = {}, accrualOn = true) {
+function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapOpts: MapOpts = {}) {
   const result = {
     entries: [] as JournalEntry[],
     rowResults: [] as RowResult[],
-    error: null as string | null, totalRows: 0, importableRows: 0, skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0,
+    error: null as string | null, totalRows: 0, importableRows: 0,
+    skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0, duplicateCount: 0,
+    /** 餘額勾稽：檔尾餘額 vs 期初+Σ收入−Σ支出（含被略過的重複列，驗證解析正確性） */
+    balance: null as null | { expected: number; computed: number; ok: boolean },
   }
   if (rows.length < 2) { result.error = '檔案需含標題列與至少一列資料。'; return result }
   const headers = rows[0]
@@ -266,6 +317,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catO
   const cBranch = findCol(headers, '交易分行', '分行')
   const cInvNo = findCol(headers, '收入發票號碼', '發票號碼', '發票')
   const cVoucher = findCol(headers, '支出請款單號', '請款單號', '請款單', '支出憑證類別', '憑證類別', '憑證編號', '憑證')
+  const cBal = findCol(headers, '餘額')
   const cIn = headers.findIndex((h) => ['存入金額', '收入'].includes(h.trim()) || h.includes('存入') || (h.includes('收入') && !h.includes('發票')))
   const cOut = headers.findIndex((h) => ['提出金額', '支出'].includes(h.trim()) || h.includes('提出') || (h.includes('支出') && !h.includes('憑證') && !h.includes('請款')))
   if (cDate < 0 || (cIn < 0 && cOut < 0)) {
@@ -273,16 +325,27 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catO
     return result
   }
 
-  const opts = { catOverride, matchCategory, accrualOn }
+  const opts = { catOverride: mapOpts.catOverride, matchCategory, accrualOn: mapOpts.accrualOn }
+  const remaining = mapOpts.existingKeys ? new Map(mapOpts.existingKeys) : null
   let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
+  let runningNet = 0
+  let lastBalance: number | null = null
+  let netAtBalance = 0 // 最後一個「有餘額」列當下的累計淨額（檔案常中途停填餘額欄，其後不列入勾稽）
 
   for (const row of rows.slice(1)) {
-    if (row.every((c) => !c || !c.trim())) continue
+    // 只看核心欄位判斷空列（忽略帳戶/餘額欄，檔尾常整片只剩餘額）
+    const core = [cDate, cDesc, cCat, cIn, cOut].filter((i) => i >= 0)
+    if (core.every((i) => !(row[i] ?? '').trim())) {
+      if (cBal >= 0 && (row[cBal] ?? '').trim()) { lastBalance = parseAmount(row[cBal]); netAtBalance = runningNet }
+      continue
+    }
     result.totalRows++
 
     const income = cIn >= 0 ? parseAmount(row[cIn] ?? '') : 0
     const expense = cOut >= 0 ? parseAmount(row[cOut] ?? '') : 0
     const amount = income > 0 ? income : expense
+    if (amount > 0) runningNet += income - expense
+    if (cBal >= 0 && (row[cBal] ?? '').trim()) { lastBalance = parseAmount(row[cBal]); netAtBalance = runningNet }
     if (amount <= 0) { result.skippedNoAmount++; continue }
 
     let date = normalizeDate(row[cDate] ?? '')
@@ -302,13 +365,24 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, catO
     const rowInput: RowInput = { date, amount, direction, description: desc, catText: catText || undefined, counterpartyAccount, branch, voucherNo }
     try {
       const plan = planRow(rowInput, cashCode, accounts, opts)
+      // 重複偵測：系統已有同（公司+日期+金額+摘要）者，按剩餘次數略過
+      if (remaining && consumeDup(remaining, date, amount, desc, mapOpts.company)) {
+        result.duplicateCount++
+        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup' })
+        continue
+      }
       const entries = rowToEntries(rowInput, cashCode, accounts, opts)
       result.entries.push(...entries)
-      result.rowResults.push({ date, desc, amount, direction, plan })
+      const status: RowStatus = plan.accrual ? 'accrual' : plan.review ? 'review' : 'cash'
+      result.rowResults.push({ date, desc, amount, direction, plan, status })
       result.importableRows++
       if (plan.accrual) result.accrualCount++
       if (plan.review) result.needsReviewCount++
     } catch { /* skip 無法建立的列 */ }
+  }
+
+  if (lastBalance !== null) {
+    result.balance = { expected: lastBalance, computed: netAtBalance, ok: lastBalance === netAtBalance }
   }
   return result
 }
