@@ -307,7 +307,7 @@ const LegCell = React.memo(function LegCell(
 
   if (e.source === 'settlement') {
     return (
-      <div className="text-xs text-gray-600">
+      <div className="text-sm text-gray-600">
         {accName(line.accountCode)}
         <div className="tabular-nums text-gray-400">{formatTWD(amount)}</div>
       </div>
@@ -326,8 +326,8 @@ const LegCell = React.memo(function LegCell(
   return (
     <div className={`cursor-pointer rounded px-1 hover:bg-brand-soft ${e.needsReview ? 'text-amber-700' : 'text-gray-700'}`}
       title="點擊修改科目" onClick={() => setEdit(true)}>
-      <div className="flex items-center gap-1 text-xs">{accName(line.accountCode)} <span className="text-gray-300">✎</span></div>
-      <div className="tabular-nums text-gray-500 text-xs">{formatTWD(amount)}</div>
+      <div className="flex items-center gap-1 text-sm">{accName(line.accountCode)} <span className="text-gray-300">✎</span></div>
+      <div className="tabular-nums text-gray-500 text-sm">{formatTWD(amount)}</div>
     </div>
   )
 })
