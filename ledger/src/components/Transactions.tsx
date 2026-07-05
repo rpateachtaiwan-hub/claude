@@ -9,7 +9,7 @@ import { downloadCSV, toCSV } from '../lib/csv'
 import AccountCombo from './AccountCombo'
 import type { Account, JournalEntry, QuickInput } from '../core/types'
 
-type SortKey = 'seq' | 'date' | 'description' | 'legs' | 'reviewed'
+type SortKey = 'seq' | 'date' | 'description' | 'legs' | 'reviewed' | 'company'
 
 /** 流水號顯示：補零至 7 位（可達千萬筆仍對齊；超過自動加長） */
 function fmtSeq(n?: number): string {
@@ -106,6 +106,7 @@ export default function Transactions() {
       if (sortKey === 'seq') r = (a.seq ?? 0) - (b.seq ?? 0)
       else if (sortKey === 'date') r = a.date < b.date ? -1 : a.date > b.date ? 1 : 0
       else if (sortKey === 'reviewed') r = ((a.reviewedAt ? 1 : 0) - (b.reviewedAt ? 1 : 0)) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+      else if (sortKey === 'company') r = (a.company ?? '').localeCompare(b.company ?? '', 'zh-Hant') || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
       else if (sortKey === 'description') r = a.description.localeCompare(b.description, 'zh-Hant')
       else { // legs：借方科目 → 貸方科目 視為一組排序
         r = debitCodeOf(a).localeCompare(debitCodeOf(b))
@@ -280,7 +281,7 @@ export default function Transactions() {
               <th className="px-3 py-2.5 w-10 text-center"><input type="checkbox" checked={pageAllSelected} onChange={togglePage} title="勾選/取消本頁全部" className="w-5 h-5 align-middle accent-brand cursor-pointer" /></th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none whitespace-nowrap" onClick={() => toggleSort('seq')}>流水號{arrow('seq')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('date')}>日期{arrow('date')}</th>
-              <th className="px-3 py-2.5 text-left">公司</th>
+              <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('company')}>公司{arrow('company')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('description')}>摘要{arrow('description')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('legs')}>借方{arrow('legs')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('legs')}>貸方{arrow('legs')}</th>
