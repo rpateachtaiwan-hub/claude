@@ -53,6 +53,8 @@ export interface JournalEntry {
   note?: string
   /** 無法辨識科目、待人工/AI 補分類 */
   needsReview?: boolean
+  /** 人工核對完成時間（核對進度追蹤用；未核對為空） */
+  reviewedAt?: string
   createdAt?: string
 }
 

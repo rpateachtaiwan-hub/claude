@@ -56,6 +56,7 @@ export function buildEntry(input: {
   note?: string
   company?: string
   needsReview?: boolean
+  reviewedAt?: string
   id?: string
   seq?: number
 }): JournalEntry {
@@ -76,6 +77,7 @@ export function buildEntry(input: {
     voucherNo: input.voucherNo,
     note: input.note,
     needsReview: input.needsReview,
+    reviewedAt: input.reviewedAt,
     createdAt: new Date().toISOString(),
   }
 }

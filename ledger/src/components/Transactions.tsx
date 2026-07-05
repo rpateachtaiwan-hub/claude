@@ -35,6 +35,7 @@ export default function Transactions() {
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [asc, setAsc] = useState(false)
   const [onlyReview, setOnlyReview] = useState(false)
+  const [reviewedFilter, setReviewedFilter] = useState<'all' | 'un' | 'done'>('all')
   const [companyFilter, setCompanyFilter] = useState('')
   const [editing, setEditing] = useState<JournalEntry | null>(null)
   const [aiBusy, setAiBusy] = useState<string | null>(null)
@@ -62,12 +63,18 @@ export default function Transactions() {
       date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
       counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note,
       source, settled, id: e.id, seq: e.seq, needsReview: false,
+      reviewedAt: e.reviewedAt ?? new Date().toISOString(), // 人工改科目視同已核對
       lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
     }))
   }, [accounts, updateEntry])
 
   const setEntryDate = React.useCallback(async (e: JournalEntry, date: string) => {
     await updateEntry({ ...e, date })
+  }, [updateEntry])
+
+  // 核對勾記：點一下標「已核對」、再點取消（存入資料庫，跨裝置/中斷後保留進度）
+  const toggleReviewed = React.useCallback(async (e: JournalEntry) => {
+    await updateEntry({ ...e, reviewedAt: e.reviewedAt ? undefined : new Date().toISOString() })
   }, [updateEntry])
 
   const reviewCount = entries.filter((e) => e.needsReview).length
@@ -85,6 +92,8 @@ export default function Transactions() {
     const creditCodeOf = (e: JournalEntry) => e.lines.find((l) => l.credit > 0)?.accountCode ?? ''
     const filtered = entries.filter((e) => {
       if (onlyReview && !e.needsReview) return false
+      if (reviewedFilter === 'un' && e.reviewedAt) return false
+      if (reviewedFilter === 'done' && !e.reviewedAt) return false
       if (companyFilter && e.company !== companyFilter) return false
       if (!kw) return true
       const hay = [e.date, e.description, e.counterparty ?? '', e.company ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', e.note ?? '', accName(debitCodeOf(e)), accName(creditCodeOf(e)), String(amountOf(e))].join(' ').toLowerCase()
@@ -101,12 +110,18 @@ export default function Transactions() {
       }
       return asc ? r : -r
     })
-  }, [entries, q, sortKey, asc, onlyReview, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, q, sortKey, asc, onlyReview, reviewedFilter, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize))
   const safePage = Math.min(page, pageCount - 1)
   const pagedRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize)
-  React.useEffect(() => { setPage(0) }, [q, onlyReview, companyFilter])
+  React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, companyFilter])
+
+  // 核對進度（依目前公司篩選範圍計算）
+  const progress = useMemo(() => {
+    const scope = companyFilter ? entries.filter((e) => e.company === companyFilter) : entries
+    return { done: scope.filter((e) => e.reviewedAt).length, total: scope.length }
+  }, [entries, companyFilter])
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setAsc(!asc)
@@ -119,9 +134,10 @@ export default function Transactions() {
       const dr = e.lines.find((l) => l.debit > 0)!; const cr = e.lines.find((l) => l.credit > 0)!
       return [e.seq ?? '', e.date, e.company ?? '', e.description, accName(dr.accountCode), accName(cr.accountCode), dr.debit,
         e.voucherNo ?? '', e.note ?? '',
-        e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金', e.needsReview ? '待分類' : '']
+        e.source === 'accrual' ? '應計' : e.source === 'settlement' ? '沖銷' : '現金', e.needsReview ? '待分類' : '',
+        e.reviewedAt ? `✓ ${e.reviewedAt.slice(0, 10)}` : '']
     })
-    downloadCSV('交易明細', toCSV(['流水號', '日期', '公司', '摘要', '借方科目', '貸方科目', '金額', '憑證編號', '備註', '類型', '狀態'], data))
+    downloadCSV('交易明細', toCSV(['流水號', '日期', '公司', '摘要', '借方科目', '貸方科目', '金額', '憑證編號', '備註', '類型', '狀態', '核對'], data))
   }
 
   const allVisibleSelected = rows.length > 0 && rows.every((e) => selected.has(e.id))
@@ -136,10 +152,15 @@ export default function Transactions() {
     const upd = entries.filter((e) => selected.has(e.id)).map((e) => ({ ...e, company: co || undefined }))
     await updateEntriesBulk(upd); clearSel()
   }
+  async function bulkSetReviewed(done: boolean) {
+    const now = new Date().toISOString()
+    const upd = entries.filter((e) => selected.has(e.id)).map((e) => ({ ...e, reviewedAt: done ? (e.reviewedAt ?? now) : undefined }))
+    await updateEntriesBulk(upd); clearSel()
+  }
   async function bulkSetCategory(code: string) {
     const upd = entries.filter((e) => selected.has(e.id) && e.source !== 'settlement').map((e) => {
       const input = entryToInput(e, accounts)
-      return buildEntry({ ...composeEntry(input, code, accounts), id: e.id, seq: e.seq, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false })
+      return buildEntry({ ...composeEntry(input, code, accounts), id: e.id, seq: e.seq, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false, reviewedAt: e.reviewedAt ?? new Date().toISOString() })
     })
     await updateEntriesBulk(upd); clearSel()
   }
@@ -153,7 +174,8 @@ export default function Transactions() {
       const input = entryToInput(e, accounts)
       const r = await classifyWithGemini(input, accounts, aiConfig)
       if (r) {
-        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode, accounts), id: e.id, seq: e.seq, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false })
+        // Gemini 分類非人工核對：保留原核對狀態，讓使用者仍可用「未核對」篩出來驗證
+        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode, accounts), id: e.id, seq: e.seq, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false, reviewedAt: e.reviewedAt })
         await updateEntry(rebuilt)
         ok++
       }
@@ -175,6 +197,16 @@ export default function Transactions() {
             {companies.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
+        <select value={reviewedFilter} onChange={(e) => setReviewedFilter(e.target.value as 'all' | 'un' | 'done')}
+          className={`border rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand ${reviewedFilter === 'un' ? 'border-brand text-brand-dark bg-brand-soft' : 'border-gray-300'}`}
+          title="核對進度篩選：中斷後回來選「未核對」即可接著做">
+          <option value="all">核對：全部</option>
+          <option value="un">☐ 未核對（{progress.total - progress.done}）</option>
+          <option value="done">✓ 已核對（{progress.done}）</option>
+        </select>
+        <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums" title="依目前公司範圍統計">
+          進度 {progress.done}/{progress.total}{progress.total > 0 && `（${Math.round((progress.done / progress.total) * 100)}%）`}
+        </span>
         {reviewCount > 0 && (
           <button onClick={() => setOnlyReview((v) => !v)}
             className={`px-3 py-2 rounded-lg text-sm whitespace-nowrap ${onlyReview ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
@@ -198,6 +230,8 @@ export default function Transactions() {
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 bg-brand-soft border border-brand-light/40 rounded-lg p-2 text-sm">
           <span className="text-brand-dark font-medium">已選 {selected.size} 筆</span>
+          <button onClick={() => bulkSetReviewed(true)} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700">✓ 標已核對</button>
+          <button onClick={() => bulkSetReviewed(false)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs hover:bg-gray-50">取消核對</button>
           <button onClick={bulkDelete} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs hover:bg-red-600">刪除</button>
           <select onChange={(e) => { if (e.target.value) { bulkSetCategory(e.target.value); e.target.value = '' } }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">
             <option value="">批次改科目…</option>
@@ -226,11 +260,12 @@ export default function Transactions() {
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('legs')}>貸方{arrow('legs')}</th>
               <th className="px-3 py-2.5 text-left">憑證編號</th>
               <th className="px-3 py-2.5 text-left">備註</th>
+              <th className="px-3 py-2.5 text-center w-12" title="人工核對進度">核對</th>
               <th className="px-3 py-2.5 text-center w-16">操作</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={10} className="px-3 py-10 text-center text-gray-400">{q || onlyReview ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={11} className="px-3 py-10 text-center text-gray-400">{q || onlyReview || reviewedFilter !== 'all' ? '查無符合資料' : '還沒有任何紀錄'}</td></tr>}
             {pagedRows.map((e) => (
               <tr key={e.id} className={`border-t border-gray-100 hover:bg-gray-50 align-top ${selected.has(e.id) ? 'bg-brand-soft/40' : e.needsReview ? 'bg-amber-50/40 border-l-4 border-l-amber-400' : ''}`}>
                 <td className="px-1 py-1 text-center cursor-pointer" onClick={() => toggleOne(e.id)}>
@@ -256,6 +291,13 @@ export default function Transactions() {
                 <td className="px-3 py-2.5"><LegCell e={e} side="credit" accounts={sortedAccounts} onSet={setLeg} /></td>
                 <td className="px-3 py-2.5 text-gray-600 text-xs whitespace-nowrap">{e.voucherNo}</td>
                 <td className="px-3 py-2.5 text-gray-600 text-xs">{e.note}</td>
+                <td className="px-1 py-2.5 text-center">
+                  <button onClick={() => toggleReviewed(e)}
+                    title={e.reviewedAt ? `已核對 ${e.reviewedAt.slice(0, 10)}（點擊取消）` : '點擊標記為已核對'}
+                    className={`w-7 h-7 rounded-full text-sm ${e.reviewedAt ? 'bg-green-100 text-green-700' : 'border border-gray-300 text-gray-300 hover:border-green-400 hover:text-green-500'}`}>
+                    ✓
+                  </button>
+                </td>
                 <td className="px-3 py-2.5 text-center whitespace-nowrap">
                   <button onClick={() => setEditing(e)} className="text-gray-400 hover:text-brand mr-2" title="編輯">✎</button>
                   <button onClick={() => { if (confirm('刪除這筆紀錄？')) deleteEntry(e.id) }} className="text-gray-300 hover:text-red-500" title="刪除">✕</button>
@@ -363,6 +405,7 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
           counterparty: entry.counterparty, counterpartyAccount: entry.counterpartyAccount, branch: entry.branch,
           voucherNo: voucherNo || undefined, note: note || undefined,
           source, settled, needsReview: false,
+          reviewedAt: entry.reviewedAt ?? new Date().toISOString(), // 人工編輯視同已核對
           lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
         }))
       }
