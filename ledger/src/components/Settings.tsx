@@ -180,9 +180,15 @@ function AccountHealthCheck({ accounts }: { accounts: Account[] }) {
               <div className="font-medium mb-1">智慧匯入規則目標檢查（匯入時關鍵字會記到這些編號，請確認意義一致）：</div>
               {ruleIssues.map((r) => (
                 <div key={r.code} className="pl-2">
-                  ・找不到名為「<b>{r.expectedName}</b>」的科目：關鍵字 <b>{r.keywords.join('、')}</b> 的規則將失效（該類交易落入待確認）。
-                  {r.currentName && <>（原編號 {r.code} 現為「{r.currentName}」）</>}
-                  處理：新增/改名一個科目為「{r.expectedName}」（編號隨意），或告訴我要對應到你的哪個科目。
+                  {r.expectedName ? (
+                    <>
+                      ・找不到名為「<b>{r.expectedName}</b>」的科目：關鍵字 <b>{r.keywords.join('、')}</b> 的規則將失效（該類交易落入待確認）。
+                      {r.currentName && <>（原編號 {r.code} 現為「{r.currentName}」）</>}
+                      處理：新增/改名一個科目為「{r.expectedName}」（編號隨意），或告訴我要對應到你的哪個科目。
+                    </>
+                  ) : (
+                    <>・規則目標編號 <b>{r.code}</b> 不存在於科目表：關鍵字 <b>{r.keywords.join('、')}</b> 的規則將失效。請補建該編號科目，或告訴我新的對應編號。</>
+                  )}
                 </div>
               ))}
             </div>

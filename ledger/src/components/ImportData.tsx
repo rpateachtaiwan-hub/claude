@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
-import { rowToEntries, planRow, existingDupKeys, consumeDup, type RowInput, type RowPlan } from '../core/importMap'
+import { rowToEntries, planRow, existingDupKeys, consumeDup, isOpeningBalanceRow, type RowInput, type RowPlan } from '../core/importMap'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
 import { fileToRows } from '../lib/xlsx'
@@ -199,6 +199,7 @@ function ImportTx() {
           {parsed.accrualCount > 0 && <span className="text-brand-dark"> · 跨期應計 {parsed.accrualCount} 筆</span>}
           {parsed.needsReviewCount > 0 && <span className="text-amber-600"> · 待確認 {parsed.needsReviewCount} 筆</span>}
           {parsed.duplicateCount > 0 && <span className="text-gray-500"> · 已存在略過 {parsed.duplicateCount} 筆</span>}
+          {parsed.openingCount > 0 && <span className="text-gray-500"> · 期初餘額不入帳 {parsed.openingCount} 列</span>}
           {parsed.skippedNoAmount > 0 && <span> · 略過無金額 {parsed.skippedNoAmount} 列</span>}
           {parsed.skippedNoDate > 0 && <span className="text-amber-600"> · 略過日期無法辨識 {parsed.skippedNoDate} 列</span>}
         </div>
@@ -216,6 +217,7 @@ function ImportTx() {
         <>
           <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} />
           <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} />
+          <PreviewSection title={`期初餘額（依設定不入帳，略過 ${parsed.openingCount} 列）`} rows={parsed.rowResults.filter((r) => r.status === 'opening')} accName={accName} max={5} />
           <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} />
           <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} />
           <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
@@ -254,6 +256,7 @@ function PreviewSection({ title, rows, accName, max }: { title: string; rows: Ro
                   {r.status === 'accrual' && <span className="text-brand-dark bg-brand-soft rounded px-1.5 py-0.5">應計 → {r.plan.accrualDate}</span>}
                   {r.status === 'review' && <span className="text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">待確認</span>}
                   {r.status === 'dup' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">已存在</span>}
+                  {r.status === 'opening' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">期初-不入帳</span>}
                   {r.status === 'cash' && <span className="text-gray-400">現金</span>}
                 </td>
               </tr>
@@ -282,7 +285,7 @@ function matchCategory(catText: string, accounts: Account[]): string | null {
   return sub?.code ?? null
 }
 
-type RowStatus = 'cash' | 'accrual' | 'review' | 'dup'
+type RowStatus = 'cash' | 'accrual' | 'review' | 'dup' | 'opening'
 interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus }
 
 interface MapOpts {
@@ -304,7 +307,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     entries: [] as JournalEntry[],
     rowResults: [] as RowResult[],
     error: null as string | null, totalRows: 0, importableRows: 0,
-    skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0, duplicateCount: 0,
+    skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0, duplicateCount: 0, openingCount: 0,
     /** 餘額勾稽：檔尾餘額 vs 期初+Σ收入−Σ支出（含被略過的重複列，驗證解析正確性） */
     balance: null as null | { expected: number; computed: number; ok: boolean },
   }
@@ -361,6 +364,13 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     const invNo = cInvNo >= 0 ? cleanVoucher(row[cInvNo]) : undefined
     const voucher = cVoucher >= 0 ? cleanVoucher(row[cVoucher]) : undefined
     const voucherNo = direction === 'in' ? invNo || voucher : voucher || invNo
+
+    // 期初餘額列不入帳（仍計入上方 runningNet，檔內勾稽才會相符）
+    if (isOpeningBalanceRow(desc)) {
+      result.openingCount++
+      result.rowResults.push({ date, desc, amount, direction, plan: { debitCode: '', creditCode: '', account: '', review: false, accrual: false }, status: 'opening' })
+      continue
+    }
 
     const rowInput: RowInput = { date, amount, direction, description: desc, catText: catText || undefined, counterpartyAccount, branch, voucherNo }
     try {

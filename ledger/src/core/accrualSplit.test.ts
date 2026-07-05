@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
+import { USER_CODE_ACCOUNTS } from './testFixtures'
 import { rowToEntries, type RowInput } from './importMap'
 import { splitToAccrual, mergeToCash } from './accrualSplit'
 import { openItems } from './settle'
 
-const A = UNIFIED_PRESET_ACCOUNTS
+const A = [...UNIFIED_PRESET_ACCOUNTS, ...USER_CODE_ACCOUNTS]
 
 function cashEntry(p: Partial<RowInput> & Pick<RowInput, 'date' | 'description' | 'direction' | 'amount'>) {
   const entries = rowToEntries({ company: '菸酒', ...p } as RowInput, '1102', A, { accrualOn: false })

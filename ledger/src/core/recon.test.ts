@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
+import { USER_CODE_ACCOUNTS } from './testFixtures'
 import { rowToEntries, type RowInput } from './importMap'
 import { bankBalanceAsOf, monthlyBankBalances } from './recon'
 import { twoLegEntry } from './engine'
 
-const A = UNIFIED_PRESET_ACCOUNTS
+const A = [...UNIFIED_PRESET_ACCOUNTS, ...USER_CODE_ACCOUNTS]
 
 function row(p: Partial<RowInput> & Pick<RowInput, 'date' | 'description' | 'direction' | 'amount'>): RowInput {
   return { company: '菸酒', ...p } as RowInput

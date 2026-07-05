@@ -48,26 +48,26 @@ export interface KeywordRule {
 
 // 注意順序：實體專屬規則在通用規則之前（如 Jeff個人帳戶 需在 代墊款 之前、
 // 客人現金款存入 在 現金款存入 之前、直客收入 在 蝦皮 之前）。
+// 目標編號兩種形式：建議科目表編號（先認名稱解析，使用者改碼自動跟上），
+// 或使用者確認的自訂編號（112/212/402/521/531/501/609/610/611/6021/6022，直接認編號）。
 export const KEYWORD_RULES: KeywordRule[] = [
-  // 期初餘額（權益，不進損益）
-  { match: '餘額', account: '3202' },
   // 關係人／股東往來（實體專屬）
   { match: 'Jeff個人帳戶', account: '2302' },
   { match: 'Jeff帳戶', account: '2302' },
-  { match: '娛樂公司購買', account: '4110' },
+  { match: '娛樂公司購買', account: '4999', review: true }, // 關係人銷貨：使用者要求逐筆確認
   { match: '向貿易公司購買', account: '5104' },
   { match: '週轉金', account: '2301' },
   { match: '周轉金', account: '2301' },
-  // 酒商成本
-  { match: '代付酒貨款', account: '5101' },
-  { match: 'Austin個人帳戶', account: '5101' },
-  { match: '酒貨款', account: '5101' },
-  { match: '國貿公司', account: '5101', direction: 'out' },
-  // 借款
-  { match: '企貸還款', account: '2201' },
-  { match: '台企銀', account: '2201' },
-  { match: '玉山', account: '2202' },
-  { match: '和潤', account: '2401' },
+  // 酒商成本 → 521 營業成本-酒
+  { match: '代付酒貨款', account: '521' },
+  { match: 'Austin個人帳戶', account: '521' },
+  { match: '酒貨款', account: '521' },
+  { match: '國貿公司', account: '521', direction: 'out' },
+  // 借款（台企銀/玉山/和潤 皆併入 212）
+  { match: '企貸還款', account: '212' },
+  { match: '台企銀', account: '212' },
+  { match: '玉山', account: '212' },
+  { match: '和潤', account: '212' },
   // 收入
   { match: 'KP店', account: '4107', direction: 'in' },
   { match: '客人現金款存入', account: '4104', direction: 'in' },
@@ -78,48 +78,48 @@ export const KEYWORD_RULES: KeywordRule[] = [
   { match: 'iCash', account: '4103', direction: 'in' },
   { match: 'iPass', account: '4103', direction: 'in' },
   { match: '直客收入', account: '4109', direction: 'in' },
-  { match: '蝦皮', account: '4108', direction: 'in' },
-  { match: '綠界', account: '4108', direction: 'in' },
-  { match: '平台收入', account: '4108', direction: 'in' },
-  { match: '賣貨便', account: '4108', direction: 'in' },
+  { match: '蝦皮', account: '402', direction: 'in' },
+  { match: '綠界', account: '402', direction: 'in' },
+  { match: '平台收入', account: '402', direction: 'in' },
+  { match: '賣貨便', account: '402', direction: 'in' },
   { match: '租金', account: '4111', direction: 'in' },
   { match: '存款利息', account: '4201', direction: 'in' },
   { match: '存款息', account: '4201', direction: 'in' },
   { match: '退稅代墊返還', account: '4999', review: true },
   { match: '現金款存入', account: '4999', review: true },
   { match: '高雄費用', account: '4999', review: true },
-  // 車隊（收入/成本依方向）
-  { match: '舉牌', account: '5105', direction: 'out' },
+  // 車隊（收入/成本依方向；成本 → 501 營業成本-車資）
+  { match: '舉牌', account: '501', direction: 'out' },
   { match: '車資', account: '4105', direction: 'in' },
-  { match: '車資', account: '5105', direction: 'out' },
+  { match: '車資', account: '501', direction: 'out' },
   { match: '包車', account: '4105', direction: 'in' },
   { match: '張維中', account: '4105', direction: 'in' },
-  { match: '張維中', account: '5105', direction: 'out' },
+  { match: '張維中', account: '501', direction: 'out' },
   // 電商／門市成本
   { match: '國際物流', account: '5201', direction: 'out' },
   { match: '物流費', account: '5201', direction: 'out' },
   { match: '進口稅', account: '5202', direction: 'out' },
-  { match: '貨款', account: '5103', direction: 'out' },
+  { match: '貨款', account: '531', direction: 'out' }, // 531 營業成本-商品
   // 費用
-  { match: '勞工退休金', account: '6104' },
-  { match: '勞退', account: '6104' },
-  { match: '健保費', account: '6103' },
-  { match: '勞保費', account: '6103' },
+  { match: '勞工退休金', account: '6022' },
+  { match: '勞退', account: '6022' },
+  { match: '健保費', account: '6021' },
+  { match: '勞保費', account: '6021' },
   { match: '薪資', account: '6101', direction: 'out' },
   { match: '加班費', account: '6101', direction: 'out' },
   { match: '獎金', account: '6101', direction: 'out' },
-  { match: '內江街', account: '6102', direction: 'out' },
-  { match: '房租', account: '6102', direction: 'out' },
-  { match: '租金', account: '6102', direction: 'out' }, // 支出方向（收入方向在上）
+  { match: '內江街', account: '609', direction: 'out' },
+  { match: '房租', account: '609', direction: 'out' },
+  { match: '租金', account: '609', direction: 'out' }, // 支出方向（收入方向在上）
   { match: '外送費用', account: '6107', direction: 'out' },
   { match: '手續費', account: '6105' },
-  { match: '北水', account: '6106' },
-  { match: '水費', account: '6106' },
-  { match: '電費', account: '6106' },
-  { match: '中華電信', account: '6113' },
-  { match: '電信', account: '6113' },
-  { match: '網路費', account: '6113' },
-  { match: '電話', account: '6113' },
+  { match: '北水', account: '611' },
+  { match: '水費', account: '611' },
+  { match: '電費', account: '611' },
+  { match: '中華電信', account: '610' },
+  { match: '電信', account: '610' },
+  { match: '網路費', account: '610' },
+  { match: '電話', account: '610' },
   { match: '清潔', account: '6199' },
   { match: '禮金', account: '6108' },
   { match: '帳務服務費', account: '6109' },
@@ -141,14 +141,19 @@ export const KEYWORD_RULES: KeywordRule[] = [
   { match: '任意險', account: '6112' },
   { match: '保險', account: '6112' },
   { match: '雜支', account: '6199', direction: 'out' },
-  // 資產／轉帳
-  { match: '大同分行提領', account: '1101' },
-  { match: '自行提款', account: '1101' },
-  { match: '零用金', account: '1101' },
-  { match: '提領', account: '1101' },
+  // 資產／轉帳 → 112 現金/零用金
+  { match: '大同分行提領', account: '112' },
+  { match: '自行提款', account: '112' },
+  { match: '零用金', account: '112' },
+  { match: '提領', account: '112' },
   // 通用（最後才落到這些）
   { match: '代墊款', account: '6199', review: true, direction: 'out' },
 ]
+
+/** 期初餘額列（如「114/12/31餘額」）：依使用者設定不入帳，匯入時整列略過。 */
+export function isOpeningBalanceRow(desc: string): boolean {
+  return /餘額/.test(String(desc))
+}
 
 /** 以內容關鍵字配科目；目標科目「先認名稱、再認編號」（使用者改過編號也能跟上）。未命中回 null。 */
 export function matchByDescription(

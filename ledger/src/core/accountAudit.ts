@@ -83,7 +83,11 @@ export function ruleTargetIssues(accounts: Account[]): RuleTargetIssue[] {
   const out: RuleTargetIssue[] = []
   for (const code of kwByCode.keys()) {
     const expected = presetByCode.get(code)?.name
-    if (!expected) continue
+    if (!expected) {
+      // 使用者自訂編號目標（112/212/402…）：只要編號存在即有效
+      if (!byCode.has(code)) out.push({ code, expectedName: '', missing: true, keywords: kwByCode.get(code)! })
+      continue
+    }
     if (names.has(norm(expected))) continue // 同名科目存在（編號可能已改）→ 規則有效
     const cur = byCode.get(code)
     if (cur) out.push({ code, expectedName: expected, currentName: cur.name, missing: false, keywords: kwByCode.get(code)! })

@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
+import { USER_CODE_ACCOUNTS } from './testFixtures'
 import { openItems } from './settle'
 import {
-  classifyRow, matchByDescription, parsePeriodCode, parsePeriodEx, monthEndISO, isPnL, rowToEntries, planRow,
-  dupKey, existingDupKeys, consumeDup,
+  classifyRow, matchByDescription, parsePeriodCode, parsePeriodEx, monthEndISO, isPnL, isOpeningBalanceRow,
+  rowToEntries, planRow, dupKey, existingDupKeys, consumeDup,
   type RowInput,
 } from './importMap'
 
-const accounts = UNIFIED_PRESET_ACCOUNTS
+// 使用者實際情境：保留大部分建議科目名稱（可改編號）＋ 自訂編號科目（112/212/402…）
+const accounts = [...UNIFIED_PRESET_ACCOUNTS, ...USER_CODE_ACCOUNTS]
 
 function row(p: Partial<RowInput> & Pick<RowInput, 'description' | 'direction'>): RowInput {
   return { date: '2026-06-01', amount: 1000, ...p }
@@ -22,22 +24,25 @@ describe('關鍵字配科目', () => {
     expect(m?.account).toBe('4999')
     expect(m?.review).toBe(true)
   })
-  it('酒貨款相關 → 營業成本-酒(5101)', () => {
-    expect(matchByDescription('Austin個人帳戶－酒貨款', accounts)?.account).toBe('5101')
-    expect(matchByDescription('國貿公司(國泰)－代付酒貨款', accounts)?.account).toBe('5101')
+  it('酒貨款相關 → 使用者自訂 521', () => {
+    expect(matchByDescription('Austin個人帳戶－酒貨款', accounts)?.account).toBe('521')
+    expect(matchByDescription('國貿公司(國泰)－代付酒貨款', accounts)?.account).toBe('521')
   })
   it('周轉金 → 股東往來-旅行社(2301)', () => {
     expect(matchByDescription('旅行社－借入周轉金', accounts)?.account).toBe('2301')
   })
-  it('提領 → 現金/零用金(1101)', () => {
-    expect(matchByDescription('現金 (大同分行提領)', accounts)?.account).toBe('1101')
-    expect(matchByDescription('自行提款 0130VCEE', accounts)?.account).toBe('1101')
+  it('提領/自行提款/零用金 → 使用者自訂 112', () => {
+    expect(matchByDescription('現金 (大同分行提領)', accounts)?.account).toBe('112')
+    expect(matchByDescription('自行提款 0130VCEE', accounts)?.account).toBe('112')
+    expect(matchByDescription('存剩餘零用金', accounts)?.account).toBe('112')
   })
-  it('台企銀企貸還款 → 銀行借款(2201)', () => {
-    expect(matchByDescription('台企銀2606企貸還款', accounts)?.account).toBe('2201')
+  it('借款統一 212：台企銀/玉山/和潤', () => {
+    expect(matchByDescription('台企銀2606企貸還款', accounts)?.account).toBe('212')
+    expect(matchByDescription('償還企業貸款-玉山銀行', accounts)?.account).toBe('212')
+    expect(matchByDescription('償還和潤車貸-REC-0626', accounts)?.account).toBe('212')
   })
   it('勞退在薪資之前命中，不誤配薪資', () => {
-    expect(matchByDescription('2604勞工退休金', accounts)?.account).toBe('6104')
+    expect(matchByDescription('2604勞工退休金', accounts)?.account).toBe('6022')
     expect(matchByDescription('2605金炫宗薪資', accounts)?.account).toBe('6101')
   })
   it('實體專屬規則優先於通用「代墊款」：Jeff個人帳戶→股東往來-其他(2302)', () => {
@@ -48,46 +53,38 @@ describe('關鍵字配科目', () => {
     expect(m?.account).toBe('6199')
     expect(m?.review).toBe(true)
   })
-  it('存剩餘零用金 → 現金/零用金(1101) 轉帳', () => {
-    expect(matchByDescription('存剩餘零用金', accounts)?.account).toBe('1101')
-  })
   it('未命中回 null', () => {
     expect(matchByDescription('莫名其妙的東西', accounts)).toBeNull()
   })
-  it('全表重編號但名稱不變 → 規則自動跟上（先認名稱）', () => {
-    const renum = accounts.map((a, i) => ({ ...a, code: `N${String(i).padStart(3, '0')}` }))
-    const m = matchByDescription('2604健保費', renum, 'out')
-    expect(m).not.toBeNull()
-    expect(renum.find((a) => a.code === m!.account)?.name).toBe('勞健保費')
+  it('期初餘額列：偵測為不入帳列、不再配科目', () => {
+    expect(isOpeningBalanceRow('114/12/31餘額')).toBe(true)
+    expect(isOpeningBalanceRow('存剩餘零用金')).toBe(false)
+    expect(matchByDescription('114/12/31餘額', accounts)).toBeNull()
   })
-  it('語意衝突防護：編號被不同名稱佔用且無同名科目 → 規則不採用', () => {
-    // 6103 改名為 油料/交通費，且表中沒有任何「勞健保費」→ 健保費規則失效，落到 fallback
-    const chart = accounts.map((a) => (a.code === '6103' ? { ...a, name: '油料/交通費' } : a))
-    const m = matchByDescription('2604健保費', chart, 'out')
-    expect(m).toBeNull()
-  })
-  it('期初餘額 → 權益(3202)，不進損益', () => {
-    expect(matchByDescription('114/12/31餘額', accounts)?.account).toBe('3202')
-    expect(isPnL('3202', accounts)).toBe(false)
-  })
-  it('方向感知：車資收入(in)→4105、司機車資(out)→5105', () => {
+  it('方向感知：車資收入(in)→4105、司機車資(out)→501', () => {
     expect(matchByDescription('月結-12月車資-路特旅行社_1', accounts, 'in')?.account).toBe('4105')
-    expect(matchByDescription('月結-12月車資 劉新迪', accounts, 'out')?.account).toBe('5105')
+    expect(matchByDescription('月結-12月車資 劉新迪', accounts, 'out')?.account).toBe('501')
   })
   it('KP店營收 → 門市營業收入(4107)', () => {
     expect(matchByDescription('KP店現金營收- 12/31- 26/1/1', accounts, 'in')?.account).toBe('4107')
   })
-  it('電商平台/直客：直客收入優先於蝦皮', () => {
+  it('電商平台/直客：直客收入(4109)優先於蝦皮；平台類 → 402', () => {
     expect(matchByDescription('直客收入-蝦皮未取退貨', accounts, 'in')?.account).toBe('4109')
-    expect(matchByDescription('平台收入-蝦皮', accounts, 'in')?.account).toBe('4108')
+    expect(matchByDescription('平台收入-蝦皮', accounts, 'in')?.account).toBe('402')
   })
-  it('借款：玉山→2202、和潤→2401、台企銀→2201', () => {
-    expect(matchByDescription('償還企業貸款-玉山銀行', accounts)?.account).toBe('2202')
-    expect(matchByDescription('償還和潤車貸-REC-0626', accounts)?.account).toBe('2401')
-  })
-  it('租金依方向：收租→4111、付租→6102', () => {
+  it('租金依方向：收租→4111、付租→609', () => {
     expect(matchByDescription('2601-RED-2682  租金', accounts, 'in')?.account).toBe('4111')
-    expect(matchByDescription('租金支出', accounts, 'out')?.account).toBe('6102')
+    expect(matchByDescription('租金支出', accounts, 'out')?.account).toBe('609')
+  })
+  it('全表重編號但名稱不變 → 名稱型規則自動跟上（存款利息→利息收入）', () => {
+    const renum = UNIFIED_PRESET_ACCOUNTS.map((a, i) => ({ ...a, code: `N${String(i).padStart(3, '0')}` }))
+    const m = matchByDescription('存款利息', renum, 'in')
+    expect(m).not.toBeNull()
+    expect(renum.find((a) => a.code === m!.account)?.name).toBe('利息收入')
+  })
+  it('語意衝突防護：預期名稱不存在時規則不採用（避免記錯位置）', () => {
+    const chart = UNIFIED_PRESET_ACCOUNTS.map((a) => (a.code === '4201' ? { ...a, name: '某某收入' } : a))
+    expect(matchByDescription('存款利息', chart, 'in')).toBeNull()
   })
 })
 
@@ -159,15 +156,15 @@ describe('classifyRow fallback', () => {
     expect(c.account).toBe('6112')
     expect(c.review).toBe(true)
   })
-  it('類別=收入但內容是關係人銷貨：娛樂公司購買 → 4110', () => {
+  it('關係人銷貨（娛樂公司購買）→ 待確認(4999)，由使用者逐筆判斷', () => {
     const c = classifyRow(row({ description: '娛樂公司購買-護手霜', direction: 'in', catText: '收入' }), accounts)
-    expect(c.account).toBe('4110')
-    expect(c.review).toBe(false)
+    expect(c.account).toBe('4999')
+    expect(c.review).toBe(true)
   })
 })
 
 describe('跨期自動拆應計', () => {
-  it('2604健保費 6/1 付 → 4/30 應計(借6103/貸2101) + 6/1 沖銷(借2101/貸1102)，且不留在沖銷清單', () => {
+  it('2604健保費 6/1 付 → 4/30 應計(借6021/貸應付) + 6/1 沖銷(借應付/貸銀行)，且不留在沖銷清單', () => {
     const entries = rowToEntries(
       row({ description: '2604健保費', direction: 'out', amount: 11216 }),
       '1102', accounts,
@@ -176,25 +173,24 @@ describe('跨期自動拆應計', () => {
     const [accrual, settle] = entries
     expect(accrual.source).toBe('accrual')
     expect(accrual.date).toBe('2026-04-30')
-    expect(accrual.lines.find((l) => l.accountCode === '6103')!.debit).toBe(11216)
+    expect(accrual.lines.find((l) => l.accountCode === '6021')!.debit).toBe(11216)
     expect(accrual.lines.find((l) => l.accountCode === '2101')!.credit).toBe(11216)
     expect(settle.source).toBe('settlement')
     expect(settle.date).toBe('2026-06-01')
     expect(settle.settles).toBe(accrual.id)
     expect(settle.lines.find((l) => l.accountCode === '2101')!.debit).toBe(11216)
     expect(settle.lines.find((l) => l.accountCode === '1102')!.credit).toBe(11216)
-    // 已自動沖平 → 不在未沖清單
     expect(openItems(entries, accounts)).toHaveLength(0)
   })
 
-  it('同月份（2606 付於 6 月）不拆，單張現金分錄', () => {
+  it('同月份（2606 付於 6 月）不拆，單張現金分錄（房租→609）', () => {
     const entries = rowToEntries(
       row({ description: '2606內江街6號房租+車位', direction: 'out', amount: 63015 }),
       '1102', accounts,
     )
     expect(entries).toHaveLength(1)
     expect(entries[0].source).toBe('cash')
-    expect(entries[0].lines.find((l) => l.accountCode === '6102')!.debit).toBe(63015)
+    expect(entries[0].lines.find((l) => l.accountCode === '609')!.debit).toBe(63015)
   })
 
   it('非損益（周轉金）即使有代碼也不拆', () => {
@@ -207,14 +203,14 @@ describe('跨期自動拆應計', () => {
     expect(isPnL('2301', accounts)).toBe(false)
   })
 
-  it('跨年度：月結-12月車資 於 2026-01-02 付 → 2025-12-31 應計(借5105/貸2101)+沖銷', () => {
+  it('跨年度：月結-12月車資 於 2026-01-02 付 → 2025-12-31 應計(借501/貸應付)+沖銷', () => {
     const entries = rowToEntries(
       row({ date: '2026-01-02', description: '月結-12月車資 劉新迪', direction: 'out', amount: 27953 }),
       '1112', accounts,
     )
     expect(entries).toHaveLength(2)
     expect(entries[0].date).toBe('2025-12-31')
-    expect(entries[0].lines.find((l) => l.accountCode === '5105')!.debit).toBe(27953)
+    expect(entries[0].lines.find((l) => l.accountCode === '501')!.debit).toBe(27953)
     expect(entries[1].date).toBe('2026-01-02')
     expect(openItems(entries, accounts)).toHaveLength(0)
   })
@@ -238,16 +234,6 @@ describe('跨期自動拆應計', () => {
     expect(entries[0].source).toBe('cash')
     expect(entries[0].needsReview).toBe(true)
     expect(entries[0].lines.find((l) => l.accountCode === '6110')!.debit).toBe(49083)
-  })
-
-  it('期初餘額列：借銀行/貸期初餘額，不拆應計', () => {
-    const entries = rowToEntries(
-      row({ date: '2026-01-02', description: '114/12/31餘額', direction: 'in', amount: 42794 }),
-      '1112', accounts,
-    )
-    expect(entries).toHaveLength(1)
-    expect(entries[0].lines.find((l) => l.accountCode === '1112')!.debit).toBe(42794)
-    expect(entries[0].lines.find((l) => l.accountCode === '3202')!.credit).toBe(42794)
   })
 
   it('待確認（科目不確定）的跨期列不自動拆應計，維持現金＋待複核', () => {
@@ -310,7 +296,7 @@ describe('planRow 預覽', () => {
     const p = planRow(row({ description: '2604健保費', direction: 'out', amount: 11216 }), '1102', accounts)
     expect(p.accrual).toBe(true)
     expect(p.accrualDate).toBe('2026-04-30')
-    expect(p.account).toBe('6103')
+    expect(p.account).toBe('6021')
   })
   it('一般列：借費用/貸銀行，不應計', () => {
     const p = planRow(row({ description: '手續費', direction: 'out', amount: 90 }), '1102', accounts)
