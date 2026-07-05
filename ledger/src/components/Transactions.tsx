@@ -29,9 +29,8 @@ function entryToInput(e: JournalEntry, accounts: Account[]): QuickInput {
 }
 
 export default function Transactions() {
-  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies, backfillSeq } = useLedger()
+  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies, backfillSeq, undoStack, undo } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
-  const categoryAccounts = accounts.filter((a) => !a.isCash)
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [asc, setAsc] = useState(false)
@@ -170,10 +169,22 @@ export default function Transactions() {
     const upd = entries.filter((e) => selected.has(e.id)).map((e) => ({ ...e, reviewedAt: done ? (e.reviewedAt ?? now) : undefined }))
     await updateEntriesBulk(upd); clearSel()
   }
-  async function bulkSetCategory(code: string) {
+  // 批次改「指定邊」的科目（借方或貸方），另一邊維持不動；沖銷分錄略過
+  async function bulkSetLeg(side: 'debit' | 'credit', code: string) {
+    const now = new Date().toISOString()
     const upd = entries.filter((e) => selected.has(e.id) && e.source !== 'settlement').map((e) => {
-      const input = entryToInput(e, accounts)
-      return buildEntry({ ...composeEntry(input, code, accounts), id: e.id, seq: e.seq, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false, reviewedAt: e.reviewedAt ?? new Date().toISOString() })
+      const dr = e.lines.find((l) => l.debit > 0)!
+      const cr = e.lines.find((l) => l.credit > 0)!
+      const amount = dr.debit
+      const debitCode = side === 'debit' ? code : dr.accountCode
+      const creditCode = side === 'credit' ? code : cr.accountCode
+      const { source, settled } = sourceFromLegs(debitCode, creditCode, accounts)
+      return buildEntry({
+        date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
+        counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note,
+        source, settled, id: e.id, seq: e.seq, needsReview: false, reviewedAt: e.reviewedAt ?? now,
+        lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
+      })
     })
     await updateEntriesBulk(upd); clearSel()
   }
@@ -237,6 +248,11 @@ export default function Transactions() {
             # 補編流水號 {noSeqCount}
           </button>
         )}
+        <button onClick={() => undo()} disabled={!undoStack.length}
+          title={undoStack.length ? `復原：${undoStack[undoStack.length - 1].label}（可再復原 ${undoStack.length} 步）` : '沒有可復原的動作'}
+          className="px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap disabled:opacity-40">
+          ↶ 復原{undoStack.length > 0 && <span className="text-xs text-gray-400">（{undoStack.length}）</span>}
+        </button>
         <button onClick={exportCsv} className="px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap">⬇ 匯出 Excel</button>
       </div>
 
@@ -251,9 +267,13 @@ export default function Transactions() {
           <button onClick={() => bulkSetReviewed(true)} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700">✓ 標已核對</button>
           <button onClick={() => bulkSetReviewed(false)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs hover:bg-gray-50">取消核對</button>
           <button onClick={bulkDelete} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs hover:bg-red-600">刪除</button>
-          <select onChange={(e) => { if (e.target.value) { bulkSetCategory(e.target.value); e.target.value = '' } }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">
-            <option value="">批次改科目…</option>
-            {categoryAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+          <select onChange={(e) => { if (e.target.value) { bulkSetLeg('debit', e.target.value); e.target.value = '' } }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+            <option value="">批次改借方…</option>
+            {sortedAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+          </select>
+          <select onChange={(e) => { if (e.target.value) { bulkSetLeg('credit', e.target.value); e.target.value = '' } }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">
+            <option value="">批次改貸方…</option>
+            {sortedAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
           </select>
           {companies.length > 0 && (
             <select onChange={(e) => { bulkSetCompany(e.target.value); e.target.value = '' }} defaultValue="" className="border border-gray-300 rounded px-2 py-1.5 text-xs">

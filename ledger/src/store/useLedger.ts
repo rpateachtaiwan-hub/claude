@@ -41,6 +41,10 @@ interface LedgerState extends PersistShape {
   ready: boolean
   usingSupabase: boolean
   aiConfig: AiConfig
+  /** 復原堆疊（保留最近 10 步交易異動；記憶體內，重新整理後清空） */
+  undoStack: { label: string; entries: JournalEntry[] }[]
+  /** 復原上一步交易異動 */
+  undo: () => Promise<void>
   /** 銀行對帳點（雲端存 rules 表、本機存獨立 key） */
   reconPoints: ReconPoint[]
   addReconPoint: (p: Omit<ReconPoint, 'id' | 'kind' | 'createdAt'>) => Promise<void>
@@ -125,15 +129,46 @@ function saveLocal(s: PersistShape) {
   localStorage.setItem(LS_KEY, JSON.stringify(s))
 }
 
-export const useLedger = create<LedgerState>()((set, get) => ({
+export const useLedger = create<LedgerState>()((set, get) => {
+  /** 交易異動前呼叫：快照目前 entries 供復原（物件皆不可變，直接存參考即可） */
+  const pushUndo = (label: string) => {
+    const stack = [...get().undoStack, { label, entries: get().entries }]
+    while (stack.length > 10) stack.shift()
+    set({ undoStack: stack })
+  }
+
+  return {
   ready: false,
   usingSupabase: false,
   aiConfig: DEFAULT_AI,
+  undoStack: [],
   accounts: [],
   rules: [],
   reconPoints: [],
   entries: [],
   companies: [],
+
+  undo: async () => {
+    const stack = get().undoStack
+    if (!stack.length) return
+    const target = stack[stack.length - 1].entries
+    const before = get().entries
+    set({ entries: target, undoStack: stack.slice(0, -1) })
+    if (get().usingSupabase) {
+      // 差異同步：新加的刪掉、被改/被刪的還原
+      const targetMap = new Map(target.map((e) => [e.id, e]))
+      const beforeMap = new Map(before.map((e) => [e.id, e]))
+      const toDelete = before.filter((e) => !targetMap.has(e.id)).map((e) => e.id)
+      const toUpsert = target.filter((e) => beforeMap.get(e.id) !== e)
+      if (toDelete.length) await supabase.from('entries').delete().in('id', toDelete)
+      for (let i = 0; i < toUpsert.length; i += 500) {
+        const chunk = toUpsert.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries: target, companies: get().companies })
+    }
+  },
 
   addReconPoint: async (p) => {
     const point: ReconPoint = { ...p, id: newId('RC'), kind: 'recon', createdAt: new Date().toISOString() }
@@ -199,6 +234,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   commit: async (input, chosenAccountCode) => {
+    pushUndo('記一筆')
     const draft = composeEntry(input, chosenAccountCode, get().accounts)
     const entry = buildEntry({ ...draft, seq: maxSeq(get().entries) + 1 }) // 驗證借貸平衡 + 流水號
     const entries = [...get().entries, entry]
@@ -209,6 +245,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   postJournal: async (j) => {
+    pushUndo('日記帳記帳')
     const accounts = get().accounts
     const { source, settled } = sourceFromLegs(j.debitCode, j.creditCode, accounts)
     const entry = buildEntry({
@@ -233,6 +270,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   updateEntry: async (entry) => {
+    pushUndo('編輯分錄')
     const entries = get().entries.map((e) => (e.id === entry.id ? entry : e))
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').upsert({ id: entry.id, date: entry.date, data: entry })
@@ -240,6 +278,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   updateEntriesBulk: async (updated) => {
+    pushUndo(`批次更新 ${updated.length} 筆`)
     const byId = new Map(updated.map((e) => [e.id, e]))
     const entries = get().entries.map((e) => byId.get(e.id) ?? e)
     set({ entries })
@@ -248,6 +287,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   deleteEntry: async (id) => {
+    pushUndo('刪除分錄')
     const entries = get().entries.filter((e) => e.id !== id)
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').delete().eq('id', id)
@@ -255,6 +295,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   deleteEntriesBulk: async (ids) => {
+    pushUndo(`批次刪除 ${ids.length} 筆`)
     const idset = new Set(ids)
     const entries = get().entries.filter((e) => !idset.has(e.id))
     set({ entries })
@@ -336,6 +377,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   settle: async (itemId, amount, cashAccountCode, date) => {
     const item = computeOpenItems(get().entries, get().accounts).find((i) => i.id === itemId)
     if (!item) throw new Error('找不到未沖項目')
+    pushUndo('沖銷')
     const base = buildSettlement(item, { date, amount, cashAccountCode })
     const entry: JournalEntry = { ...base, seq: maxSeq(get().entries) + 1 }
     const entries = [...get().entries, entry]
@@ -348,6 +390,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     const e = get().entries.find((x) => x.id === entryId)
     if (!e) throw new Error('找不到分錄')
     const { accrual, settlement } = splitToAccrual(e, accrualDate, get().accounts)
+    pushUndo('拆為應計')
     const stamped = { ...accrual, seq: maxSeq(get().entries) + 1 }
     const entries = get().entries.map((x) => (x.id === entryId ? settlement : x)).concat(stamped)
     set({ entries })
@@ -367,6 +410,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     const others = get().entries.filter((x) => x.settles === a.id && x.id !== s.id)
     if (others.length) throw new Error('該應計有多筆沖銷（部分沖銷），不可自動還原')
     const merged = mergeToCash(s, a, get().accounts)
+    pushUndo('還原為現金')
     const entries = get().entries.filter((x) => x.id !== a.id).map((x) => (x.id === s.id ? merged : x))
     set({ entries })
     if (get().usingSupabase) {
@@ -378,6 +422,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   addEntriesBulk: async (newEntries) => {
+    pushUndo(`匯入/新增 ${newEntries.length} 筆`)
     // 依序補上流水號（接續目前最大值）
     let n = maxSeq(get().entries)
     const stamped = newEntries.map((e) => ({ ...e, seq: e.seq ?? ++n }))
@@ -403,6 +448,7 @@ export const useLedger = create<LedgerState>()((set, get) => ({
   },
 
   backfillSeq: async () => {
+    pushUndo('補編流水號')
     const cur = get().entries
     // 已有流水號者保留；未編號者依日期、建立時間排序後接續最大值補編
     const need = cur.filter((e) => typeof e.seq !== 'number')
@@ -425,4 +471,5 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     }
     return need.length
   },
-}))
+  }
+})
