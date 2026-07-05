@@ -192,6 +192,19 @@ export function isPnL(accountCode: string, accounts: Account[]): boolean {
   return !!a && (a.category === 'revenue' || a.category === 'expense')
 }
 
+/**
+ * 動態解析應收/應付控制科目（編號可能被使用者改過，如 1141→1123）：
+ * 優先「isOpenItem 旗標 + 對應類別」，其次名稱含 應收/應付 的同類別科目。
+ */
+export function resolveControlAccount(direction: 'in' | 'out', accounts: Account[]): string | null {
+  const cat = direction === 'in' ? 'asset' : 'liability'
+  const kw = direction === 'in' ? '應收' : '應付'
+  const flagged = accounts.find((a) => a.isOpenItem && a.category === cat)
+  if (flagged) return flagged.code
+  const byName = accounts.find((a) => a.category === cat && a.name.includes(kw))
+  return byName?.code ?? null
+}
+
 /** 該月月底 YYYY-MM-DD（month 為 1–12）。 */
 export function monthEndISO(year: number, month: number): string {
   const d = new Date(year, month, 0) // 第 0 天 = 上個月最後一天 → 即 month 月月底
@@ -283,15 +296,15 @@ export interface BuildOpts extends ClassifyOpts {
 
 function resolvePlan(row: RowInput, accounts: Account[], opts: BuildOpts) {
   const accrualOn = opts.accrualOn !== false
-  const apAccount = opts.apAccount ?? '2101'
-  const arAccount = opts.arAccount ?? '1141'
   const codes = new Set(accounts.map((a) => a.code))
   const cls = classifyRow(row, accounts, opts)
   const [payY, payM] = row.date.split('-').map(Number)
   const period = parsePeriodEx(row.description, payY, payM)
   const isRange = period?.kind === 'range'
   const review = cls.review || isRange
-  const control = row.direction === 'in' ? arAccount : apAccount
+  const control = (row.direction === 'in' ? opts.arAccount : opts.apAccount)
+    ?? resolveControlAccount(row.direction, accounts)
+    ?? (row.direction === 'in' ? '1141' : '2101')
   const canAccrue = accrualOn && period?.kind === 'month' && cls.source !== 'fallback' && !review
     && isPnL(cls.account, accounts) && codes.has(control)
   return { cls, review, control, canAccrue, period }

@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
-import { findSimilarAccounts, ruleTargetIssues } from '../core/accountAudit'
+import { findSimilarAccounts, ruleTargetIssues, structuralIssues } from '../core/accountAudit'
 import type { Account, Category } from '../core/types'
 
 const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
@@ -12,10 +12,13 @@ export default function Settings() {
   const { accounts, addAccount, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
 
   async function applyPreset() {
-    const have = new Set(accounts.map((a) => a.code))
-    const toAdd = UNIFIED_PRESET_ACCOUNTS.filter((a) => !have.has(a.code))
-    if (!toAdd.length) { alert('建議科目表的科目都已存在，未新增任何科目。'); return }
-    if (!confirm(`將新增 ${toAdd.length} 個建議科目（不覆蓋你現有的同編號科目）。要套用嗎？`)) return
+    // 同編號或同名稱（去空白/符號）皆視為已存在——使用者改過編號的科目（如 應收帳款 1141→1123）不會被重複加回
+    const haveCode = new Set(accounts.map((a) => a.code))
+    const normName = (s: string) => s.replace(/[\s/／\-‐（）()]/g, '')
+    const haveName = new Set(accounts.map((a) => normName(a.name)))
+    const toAdd = UNIFIED_PRESET_ACCOUNTS.filter((a) => !haveCode.has(a.code) && !haveName.has(normName(a.name)))
+    if (!toAdd.length) { alert('建議科目表的科目都已存在（含同名稱不同編號者），未新增任何科目。'); return }
+    if (!confirm(`將新增 ${toAdd.length} 個建議科目（不覆蓋你現有的同編號或同名稱科目）。要套用嗎？`)) return
     await addAccountsBulk(toAdd)
     alert(`已新增 ${toAdd.length} 個科目。`)
   }
@@ -130,19 +133,26 @@ export default function Settings() {
 function AccountHealthCheck({ accounts }: { accounts: Account[] }) {
   const similar = React.useMemo(() => findSimilarAccounts(accounts), [accounts])
   const ruleIssues = React.useMemo(() => ruleTargetIssues(accounts), [accounts])
+  const structural = React.useMemo(() => structuralIssues(accounts), [accounts])
   const [open, setOpen] = useState(true)
 
-  if (!similar.length && !ruleIssues.length) {
-    return <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">✓ 科目健檢：無相近重複科目，智慧匯入規則目標全數相符。</div>
+  if (!similar.length && !ruleIssues.length && !structural.length) {
+    return <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">✓ 科目健檢：無相近重複科目、應收/應付/現金結構完整、智慧匯入規則目標全數相符。</div>
   }
 
   return (
     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2 text-xs text-amber-900 space-y-2">
       <button onClick={() => setOpen((v) => !v)} className="font-bold">
-        ⚠ 科目健檢：發現 {similar.length + ruleIssues.length} 個需要留意的項目 {open ? '▲' : '▼'}
+        ⚠ 科目健檢：發現 {similar.length + ruleIssues.length + structural.length} 個需要留意的項目 {open ? '▲' : '▼'}
       </button>
       {open && (
         <div className="space-y-2">
+          {structural.length > 0 && (
+            <div>
+              <div className="font-medium mb-1 text-red-700">結構性問題（會使功能失效，請優先處理）：</div>
+              {structural.map((s, i) => <div key={i} className="pl-2 text-red-700">・{s}</div>)}
+            </div>
+          )}
           {similar.length > 0 && (
             <div>
               <div className="font-medium mb-1">相近/重複科目（記帳會分散在兩處，建議擇一保留；先用明細「批次改科目」把交易移到保留者，再刪除另一個）：</div>

@@ -60,6 +60,29 @@ describe('事後拆為應計', () => {
     expect(merged.lines.find((l) => l.accountCode === '1102')!.credit).toBe(102445)
   })
 
+  it('控制科目編號被改（1141→1123、2101→其他）仍可拆分：依 isOpenItem 動態解析', () => {
+    const chart = A.map((a) =>
+      a.code === '1141' ? { ...a, code: '1123' } : a.code === '2101' ? { ...a, code: '2201X' } : a,
+    )
+    const out = rowToEntries({ date: '2026-06-09', description: '壹詳會計帳務服務費', direction: 'out', amount: 500, company: '菸酒' } as RowInput, '1102', chart, { accrualOn: false })
+    const { accrual, settlement } = splitToAccrual(out[0], '2026-04-30', chart)
+    expect(accrual.lines.find((l) => l.accountCode === '2201X')!.credit).toBe(500)
+    expect(openItems([accrual, settlement], chart)).toHaveLength(0)
+
+    const inn = rowToEntries({ date: '2026-06-09', description: '客人現金款存入', direction: 'in', amount: 700, company: '菸酒' } as RowInput, '1102', chart, { accrualOn: false })
+    const r = splitToAccrual(inn[0], '2026-05-31', chart)
+    expect(r.accrual.lines.find((l) => l.accountCode === '1123')!.debit).toBe(700)
+    expect(openItems([r.accrual, r.settlement], chart)).toHaveLength(0)
+  })
+
+  it('匯入器自動應計同樣支援改碼後的控制科目', () => {
+    const chart = A.map((a) => (a.code === '2101' ? { ...a, code: '2199' } : a))
+    const entries = rowToEntries({ date: '2026-06-01', description: '2604健保費', direction: 'out', amount: 11216, company: '菸酒' } as RowInput, '1102', chart)
+    expect(entries).toHaveLength(2)
+    expect(entries[0].lines.find((l) => l.accountCode === '2199')!.credit).toBe(11216)
+    expect(openItems(entries, chart)).toHaveLength(0)
+  })
+
   it('還原防呆：非對應組合、部分沖銷拒絕', () => {
     const e1 = cashEntry({ date: '2026-06-09', description: 'X費用', direction: 'out', amount: 100 })
     const e2 = cashEntry({ date: '2026-06-10', description: 'Y費用', direction: 'out', amount: 200 })

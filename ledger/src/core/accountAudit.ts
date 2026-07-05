@@ -6,9 +6,24 @@
 // 純函式，於瀏覽器端對真實資料執行。
 // =============================================================================
 
-import { KEYWORD_RULES } from './importMap'
+import { KEYWORD_RULES, resolveControlAccount } from './importMap'
 import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
 import type { Account } from './types'
+
+/** 結構性檢查：應收/應付控制科目與現金科目是否存在（缺少會使應計/沖銷/對帳失效）。 */
+export function structuralIssues(accounts: Account[]): string[] {
+  const out: string[] = []
+  if (!accounts.some((a) => a.isCash)) {
+    out.push('沒有任何「現金/銀行」科目（isCash）：匯入、現金流量表與銀行對帳將無法運作。')
+  }
+  if (!resolveControlAccount('in', accounts)) {
+    out.push('找不到應收控制科目：請建立資產類科目（如 應收帳款）並勾選「應收/應付（需沖銷）」，否則收入跨期應計與沖銷會失效。')
+  }
+  if (!resolveControlAccount('out', accounts)) {
+    out.push('找不到應付控制科目：請建立負債類科目（如 應付帳款）並勾選「應收/應付（需沖銷）」，否則費用跨期應計與沖銷會失效。')
+  }
+  return out
+}
 
 function norm(s: string): string {
   return String(s).replace(/[\s/／\-‐–（）()．.]/g, '')

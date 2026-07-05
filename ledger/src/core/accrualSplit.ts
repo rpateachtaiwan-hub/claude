@@ -5,6 +5,7 @@
 // =============================================================================
 
 import { buildEntry, LedgerError } from './engine'
+import { resolveControlAccount } from './importMap'
 import type { Account, JournalEntry } from './types'
 
 export interface SplitResult {
@@ -36,8 +37,11 @@ export function splitToAccrual(
   if (!catAcc || (catAcc.category !== 'revenue' && catAcc.category !== 'expense')) {
     throw new LedgerError('另一腳非損益科目（收入/費用），不需跨期應計')
   }
-  const control = direction === 'in' ? (opts.arAccount ?? '1141') : (opts.apAccount ?? '2101')
-  if (!byCode.has(control)) throw new LedgerError(`控制科目 ${control} 不存在，請先於科目表建立`)
+  const control = (direction === 'in' ? opts.arAccount : opts.apAccount)
+    ?? resolveControlAccount(direction, accounts)
+  if (!control || !byCode.has(control)) {
+    throw new LedgerError(`找不到${direction === 'in' ? '應收' : '應付'}控制科目，請在科目表建立並勾選「應收/應付（需沖銷）」`)
+  }
   const amount = dr.debit
 
   const accrual = buildEntry({
