@@ -370,8 +370,8 @@ const LegCell = React.memo(function LegCell(
   if (e.source === 'settlement') {
     return (
       <div>
-        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] leading-tight ${chip} opacity-80`}>{name}</span>
-        <div className="tabular-nums text-gray-500 text-sm text-right pr-1 mt-0.5">{formatTWD(amount)}</div>
+        <div className={`rounded px-1.5 py-0.5 text-[13px] leading-tight text-center ${chip} opacity-80`}>{name}</div>
+        <div className="tabular-nums text-gray-500 text-sm text-right mt-0.5">{formatTWD(amount)}</div>
       </div>
     )
   }
@@ -385,13 +385,14 @@ const LegCell = React.memo(function LegCell(
     )
   }
 
+  // 色票滿版置中、金額靠右：兩者右緣切齊
   return (
-    <div className="cursor-pointer rounded px-1 py-0.5 hover:bg-brand-soft" title="點擊修改科目" onClick={() => setEdit(true)}>
-      <div className="flex items-center gap-1">
-        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] leading-tight ${chip}`}>{name}</span>
-        <span className="text-gray-300 text-xs">✎</span>
+    <div className="cursor-pointer group" title="點擊修改科目" onClick={() => setEdit(true)}>
+      <div className={`relative rounded px-4 py-0.5 text-[13px] leading-tight text-center ${chip} group-hover:ring-1 group-hover:ring-brand-light`}>
+        {name}
+        <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[11px] opacity-0 group-hover:opacity-60">✎</span>
       </div>
-      <div className="tabular-nums text-gray-600 text-sm text-right pr-1 mt-0.5">{formatTWD(amount)}</div>
+      <div className="tabular-nums text-gray-600 text-sm text-right mt-0.5">{formatTWD(amount)}</div>
     </div>
   )
 })
