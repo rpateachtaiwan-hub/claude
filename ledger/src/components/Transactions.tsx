@@ -143,8 +143,17 @@ export default function Transactions() {
     downloadCSV('交易明細', toCSV(['流水號', '日期', '公司', '摘要', '借方科目', '貸方科目', '金額', '憑證編號', '備註', '類型', '狀態', '核對'], data))
   }
 
-  const allVisibleSelected = rows.length > 0 && rows.every((e) => selected.has(e.id))
-  function toggleAll() { setSelected(allVisibleSelected ? new Set() : new Set(rows.map((e) => e.id))) }
+  // 表頭勾選＝本頁全選/取消（保留其他頁已選）；跨頁全選由選取列的按鈕執行
+  const pageAllSelected = pagedRows.length > 0 && pagedRows.every((e) => selected.has(e.id))
+  function togglePage() {
+    setSelected((s) => {
+      const n = new Set(s)
+      if (pageAllSelected) pagedRows.forEach((e) => n.delete(e.id))
+      else pagedRows.forEach((e) => n.add(e.id))
+      return n
+    })
+  }
+  function selectAllFiltered() { setSelected(new Set(rows.map((e) => e.id))) }
 
   async function bulkDelete() {
     if (!selected.size) return
@@ -233,6 +242,11 @@ export default function Transactions() {
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 bg-brand-soft border border-brand-light/40 rounded-lg p-2 text-sm">
           <span className="text-brand-dark font-medium">已選 {selected.size} 筆</span>
+          {selected.size < rows.length && (
+            <button onClick={selectAllFiltered} className="px-3 py-1.5 rounded-lg border border-brand text-brand text-xs hover:bg-brand-soft">
+              選取全部 {rows.length} 筆（含其他頁）
+            </button>
+          )}
           <button onClick={() => bulkSetReviewed(true)} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700">✓ 標已核對</button>
           <button onClick={() => bulkSetReviewed(false)} className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs hover:bg-gray-50">取消核對</button>
           <button onClick={bulkDelete} className="px-3 py-1.5 rounded-lg bg-red-500 text-white text-xs hover:bg-red-600">刪除</button>
@@ -263,7 +277,7 @@ export default function Transactions() {
         <table className="w-full min-w-[880px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-gray-500 text-xs">
-              <th className="px-3 py-2.5 w-10 text-center"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} className="w-5 h-5 align-middle accent-brand cursor-pointer" /></th>
+              <th className="px-3 py-2.5 w-10 text-center"><input type="checkbox" checked={pageAllSelected} onChange={togglePage} title="勾選/取消本頁全部" className="w-5 h-5 align-middle accent-brand cursor-pointer" /></th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none whitespace-nowrap" onClick={() => toggleSort('seq')}>流水號{arrow('seq')}</th>
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('date')}>日期{arrow('date')}</th>
               <th className="px-3 py-2.5 text-left">公司</th>
