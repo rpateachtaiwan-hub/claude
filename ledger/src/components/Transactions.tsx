@@ -9,7 +9,7 @@ import { downloadCSV, toCSV } from '../lib/csv'
 import AccountCombo from './AccountCombo'
 import type { Account, JournalEntry, QuickInput } from '../core/types'
 
-type SortKey = 'seq' | 'date' | 'description' | 'legs'
+type SortKey = 'seq' | 'date' | 'description' | 'legs' | 'reviewed'
 
 /** 流水號顯示：補零至 7 位（可達千萬筆仍對齊；超過自動加長） */
 function fmtSeq(n?: number): string {
@@ -39,6 +39,7 @@ export default function Transactions() {
   const [reviewedFilter, setReviewedFilter] = useState<'all' | 'un' | 'done'>('all')
   const [companyFilter, setCompanyFilter] = useState('')
   const [editing, setEditing] = useState<JournalEntry | null>(null)
+  const [pairFor, setPairFor] = useState<JournalEntry | null>(null)
   const [aiBusy, setAiBusy] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
@@ -104,6 +105,7 @@ export default function Transactions() {
       let r = 0
       if (sortKey === 'seq') r = (a.seq ?? 0) - (b.seq ?? 0)
       else if (sortKey === 'date') r = a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+      else if (sortKey === 'reviewed') r = ((a.reviewedAt ? 1 : 0) - (b.reviewedAt ? 1 : 0)) || (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
       else if (sortKey === 'description') r = a.description.localeCompare(b.description, 'zh-Hant')
       else { // legs：借方科目 → 貸方科目 視為一組排序
         r = debitCodeOf(a).localeCompare(debitCodeOf(b))
@@ -270,7 +272,7 @@ export default function Transactions() {
               <th className="px-3 py-2.5 text-left cursor-pointer select-none" onClick={() => toggleSort('legs')}>貸方{arrow('legs')}</th>
               <th className="px-3 py-2.5 text-left">憑證編號</th>
               <th className="px-3 py-2.5 text-left">備註</th>
-              <th className="px-3 py-2.5 text-center w-12" title="人工核對進度">核對</th>
+              <th className="px-3 py-2.5 text-center w-12 cursor-pointer select-none" title="人工核對進度（可排序）" onClick={() => toggleSort('reviewed')}>核對{arrow('reviewed')}</th>
               <th className="px-3 py-2.5 text-center w-16">操作</th>
             </tr>
           </thead>
@@ -288,8 +290,14 @@ export default function Transactions() {
                   {e.needsReview && <span className="mr-1 text-[10px] text-amber-700 bg-amber-100 rounded px-1 py-0.5 font-medium">⚠ 待分類</span>}
                   {e.description}
                   {e.counterparty && <span className="text-gray-400 text-xs"> · {e.counterparty}</span>}
-                  {e.source === 'accrual' && <span className="ml-1 text-[10px] text-amber-600 bg-amber-50 rounded px-1">應計</span>}
-                  {e.source === 'settlement' && <span className="ml-1 text-[10px] text-brand bg-brand-soft rounded px-1">沖銷</span>}
+                  {e.source === 'accrual' && (
+                    <button onClick={() => setPairFor(e)} title="點擊查看對應的沖銷分錄"
+                      className="ml-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 hover:bg-amber-100 underline decoration-dotted">應計 ↗</button>
+                  )}
+                  {e.source === 'settlement' && (
+                    <button onClick={() => setPairFor(e)} title="點擊查看對應的應計分錄"
+                      className="ml-1 text-[10px] text-brand bg-brand-soft border border-brand-light/40 rounded px-1 hover:bg-brand-light/20 underline decoration-dotted">沖銷 ↗</button>
+                  )}
                   {(e.counterpartyAccount || e.branch) && (
                     <div className="text-[10px] text-gray-400 mt-0.5">
                       {e.counterpartyAccount && <span>對方帳號 {e.counterpartyAccount}　</span>}
@@ -329,6 +337,81 @@ export default function Transactions() {
       )}
 
       {editing && <EditModal entry={editing} onClose={() => setEditing(null)} />}
+      {pairFor && <PairModal entry={pairFor} onClose={() => setPairFor(null)} onEdit={(e) => { setPairFor(null); setEditing(e) }} />}
+    </div>
+  )
+}
+
+/** 應計↔沖銷 關聯視窗：由任一方的 tag 進入，透過 settles 連結互查（含部分沖銷狀態）。 */
+function PairModal({ entry, onClose, onEdit }: { entry: JournalEntry; onClose: () => void; onEdit: (e: JournalEntry) => void }) {
+  const { entries, accounts } = useLedger()
+  const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
+  const amountOf = (e: JournalEntry) => e.lines.find((l) => l.debit > 0)?.debit ?? 0
+
+  const accrual = entry.source === 'accrual' ? entry : entries.find((x) => x.id === entry.settles)
+  const settlements = accrual
+    ? entries.filter((x) => x.settles === accrual.id).sort((a, b) => (a.date < b.date ? -1 : 1))
+    : []
+  const list: { kind: '應計' | '沖銷'; e: JournalEntry }[] = [
+    ...(accrual ? ([{ kind: '應計', e: accrual }] as const) : []),
+    ...settlements.map((e) => ({ kind: '沖銷' as const, e })),
+  ]
+  const accrualAmt = accrual ? amountOf(accrual) : 0
+  const settledAmt = settlements.reduce((s, e) => s + amountOf(e), 0)
+  const remaining = accrualAmt - settledAmt
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(ev) => ev.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b sticky top-0 bg-white">
+          <h3 className="font-bold text-sm">應計 ↔ 沖銷 關聯分錄</h3>
+          <button onClick={onClose} className="text-gray-400">✕</button>
+        </div>
+        <div className="p-5 space-y-3">
+          {!accrual && (
+            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+              找不到對應的應計分錄（可能已被刪除）。此沖銷分錄成了孤兒，建議編輯或刪除它。
+            </div>
+          )}
+          {accrual && (
+            <div className={`text-sm rounded-lg p-2.5 border ${remaining === 0 ? 'text-green-700 bg-green-50 border-green-200' : 'text-amber-700 bg-amber-50 border-amber-200'}`}>
+              應計 {formatTWD(accrualAmt)} · 已沖 {formatTWD(settledAmt)} · {remaining === 0 ? '✓ 已全額沖銷' : `未沖 ${formatTWD(remaining)}（可於「沖銷」頁處理）`}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead><tr className="bg-gray-50 text-gray-500 text-xs">
+                <th className="px-2 py-2 text-left">類型</th><th className="px-2 py-2 text-left">流水號</th><th className="px-2 py-2 text-left">日期</th>
+                <th className="px-2 py-2 text-left">借方</th><th className="px-2 py-2 text-left">貸方</th>
+                <th className="px-2 py-2 text-right">金額</th><th className="px-2 py-2 text-left">摘要</th><th className="px-2 py-2 w-8"></th>
+              </tr></thead>
+              <tbody>
+                {list.map(({ kind, e }) => {
+                  const dr = e.lines.find((l) => l.debit > 0)!
+                  const cr = e.lines.find((l) => l.credit > 0)!
+                  return (
+                    <tr key={e.id} className={`border-t border-gray-100 ${e.id === entry.id ? 'bg-brand-soft/50' : ''}`}>
+                      <td className="px-2 py-1.5">
+                        <span className={`text-[11px] rounded px-1.5 py-0.5 ${kind === '應計' ? 'bg-amber-50 text-amber-700' : 'bg-brand-soft text-brand-dark'}`}>{kind}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-gray-400 tabular-nums text-xs whitespace-nowrap">{fmtSeq(e.seq)}</td>
+                      <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{e.date}</td>
+                      <td className="px-2 py-1.5 text-xs text-gray-600">{accName(dr.accountCode)}</td>
+                      <td className="px-2 py-1.5 text-xs text-gray-600">{accName(cr.accountCode)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{formatTWD(amountOf(e))}</td>
+                      <td className="px-2 py-1.5 text-gray-700 text-xs">{e.description}</td>
+                      <td className="px-2 py-1.5 text-center">
+                        <button onClick={() => onEdit(e)} className="text-gray-400 hover:text-brand" title="編輯此分錄">✎</button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-gray-400">淡藍底列＝你點進來的那筆。點 ✎ 可直接編輯任一筆（含還原為現金）。</p>
+        </div>
+      </div>
     </div>
   )
 }
