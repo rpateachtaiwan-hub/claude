@@ -9,7 +9,19 @@ const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
 const catZh: Record<Category, string> = { asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用' }
 
 export default function Settings() {
-  const { accounts, addAccount, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
+  const { accounts, entries, addAccount, updateAccount, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
+
+  async function saveAccount(a: Account) {
+    if (!editing) { await addAccount(a); return }
+    if (editing.code !== a.code) {
+      const refs = entries.filter((e) => e.lines.some((l) => l.accountCode === editing.code)).length
+      const msg = refs > 0
+        ? `編號 ${editing.code} → ${a.code}：將同步更新 ${refs} 筆交易與相關對帳點的科目編號。確定？`
+        : `編號 ${editing.code} → ${a.code}：目前沒有交易引用此科目，直接改編號。確定？`
+      if (!confirm(msg)) return
+    }
+    await updateAccount(editing.code, a)
+  }
 
   async function applyPreset() {
     // 同編號或同名稱（去空白/符號）皆視為已存在——使用者改過編號的科目（如 應收帳款 1141→1123）不會被重複加回
@@ -124,7 +136,7 @@ export default function Settings() {
         </div>
       </section>
 
-      {(adding || editing) && <AccountModal account={editing} onClose={() => { setAdding(false); setEditing(null) }} onSave={addAccount} />}
+      {(adding || editing) && <AccountModal account={editing} onClose={() => { setAdding(false); setEditing(null) }} onSave={saveAccount} />}
     </div>
   )
 }
@@ -203,7 +215,10 @@ function AccountModal({ account, onClose, onSave }: { account: Account | null; o
           <button onClick={onClose} className="text-gray-400">✕</button>
         </div>
         <div className="p-5 space-y-3">
-          <L t="編號"><input value={code} onChange={(e) => setCode(e.target.value)} className={inp} placeholder="例：6107" disabled={isEdit} /></L>
+          <L t="編號">
+            <input value={code} onChange={(e) => setCode(e.target.value)} className={inp} placeholder="例：6107" />
+            {isEdit && <p className="text-[11px] text-gray-400 mt-0.5">可修改編號：儲存時會自動把引用此科目的交易與對帳點一併改到新編號。</p>}
+          </L>
           <L t="名稱"><input value={name} onChange={(e) => setName(e.target.value)} className={inp} placeholder="例：保險費" /></L>
           <L t="類別">
             <select value={category} onChange={(e) => setCategory(e.target.value as Category)} className={inp}>

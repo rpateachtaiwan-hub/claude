@@ -58,6 +58,8 @@ interface LedgerState extends PersistShape {
   deleteEntry: (id: string) => Promise<void>
   deleteEntriesBulk: (ids: string[]) => Promise<void>
   addAccount: (a: Account) => Promise<void>
+  /** 編輯科目（含改編號：自動把引用舊編號的分錄與對帳點改到新編號） */
+  updateAccount: (oldCode: string, a: Account) => Promise<void>
   deleteAccount: (code: string) => Promise<void>
   addCompany: (name: string) => Promise<void>
   deleteCompany: (name: string) => Promise<void>
@@ -265,6 +267,45 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     set({ accounts })
     if (get().usingSupabase) await supabase.from('accounts').upsert({ code: a.code, data: a })
     else saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
+  },
+
+  updateAccount: async (oldCode, a) => {
+    const codeChanged = oldCode !== a.code
+    if (codeChanged && get().accounts.some((x) => x.code === a.code)) {
+      throw new Error(`編號 ${a.code} 已被其他科目使用`)
+    }
+    const accounts = get().accounts.map((x) => (x.code === oldCode ? a : x))
+    let entries = get().entries
+    const touched: JournalEntry[] = []
+    let recon = get().reconPoints
+    const touchedRecon: ReconPoint[] = []
+    if (codeChanged) {
+      entries = entries.map((e) => {
+        if (!e.lines.some((l) => l.accountCode === oldCode)) return e
+        const ne = { ...e, lines: e.lines.map((l) => (l.accountCode === oldCode ? { ...l, accountCode: a.code } : l)) }
+        touched.push(ne)
+        return ne
+      })
+      recon = recon.map((p) => {
+        if (p.accountCode !== oldCode) return p
+        const np = { ...p, accountCode: a.code }
+        touchedRecon.push(np)
+        return np
+      })
+    }
+    set({ accounts, entries, reconPoints: recon })
+    if (get().usingSupabase) {
+      if (codeChanged) await supabase.from('accounts').delete().eq('code', oldCode)
+      await supabase.from('accounts').upsert({ code: a.code, data: a })
+      for (let i = 0; i < touched.length; i += 500) {
+        const chunk = touched.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+      if (touchedRecon.length) await supabase.from('rules').upsert(touchedRecon.map((p) => ({ id: p.id, data: p })))
+    } else {
+      saveLocal({ accounts, rules: get().rules, entries, companies: get().companies })
+      if (touchedRecon.length) saveReconLocal(recon)
+    }
   },
 
   deleteAccount: async (code) => {
