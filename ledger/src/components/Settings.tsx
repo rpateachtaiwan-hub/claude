@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
+import { findSimilarAccounts, ruleTargetIssues } from '../core/accountAudit'
 import type { Account, Category } from '../core/types'
 
 const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
@@ -94,6 +95,8 @@ export default function Settings() {
           <br />· <b>資產</b>（現金、應收、設備…）、<b>負債</b>（應付、借款…）、<b>權益</b>（資本）→ <b>資產負債表</b>。
           <br />· <b>收入</b>、<b>費用</b> → <b>損益表</b>。
         </div>
+
+        <AccountHealthCheck accounts={accounts} />
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead><tr className="bg-gray-50 text-gray-500 text-xs">
@@ -119,6 +122,51 @@ export default function Settings() {
       </section>
 
       {(adding || editing) && <AccountModal account={editing} onClose={() => { setAdding(false); setEditing(null) }} onSave={addAccount} />}
+    </div>
+  )
+}
+
+/** 科目健檢：相近重複 + 智慧匯入規則目標語意檢查（對使用者真實科目表執行） */
+function AccountHealthCheck({ accounts }: { accounts: Account[] }) {
+  const similar = React.useMemo(() => findSimilarAccounts(accounts), [accounts])
+  const ruleIssues = React.useMemo(() => ruleTargetIssues(accounts), [accounts])
+  const [open, setOpen] = useState(true)
+
+  if (!similar.length && !ruleIssues.length) {
+    return <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">✓ 科目健檢：無相近重複科目，智慧匯入規則目標全數相符。</div>
+  }
+
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2 text-xs text-amber-900 space-y-2">
+      <button onClick={() => setOpen((v) => !v)} className="font-bold">
+        ⚠ 科目健檢：發現 {similar.length + ruleIssues.length} 個需要留意的項目 {open ? '▲' : '▼'}
+      </button>
+      {open && (
+        <div className="space-y-2">
+          {similar.length > 0 && (
+            <div>
+              <div className="font-medium mb-1">相近/重複科目（記帳會分散在兩處，建議擇一保留；先用明細「批次改科目」把交易移到保留者，再刪除另一個）：</div>
+              {similar.map((p, i) => (
+                <div key={i} className="pl-2">
+                  ・「{p.a.code} {p.a.name}」與「{p.b.code} {p.b.name}」{p.reason === 'same-name' ? '名稱相同' : '名稱高度相近'}
+                </div>
+              ))}
+            </div>
+          )}
+          {ruleIssues.length > 0 && (
+            <div>
+              <div className="font-medium mb-1">智慧匯入規則目標檢查（匯入時關鍵字會記到這些編號，請確認意義一致）：</div>
+              {ruleIssues.map((r) => (
+                <div key={r.code} className="pl-2">
+                  {r.missing
+                    ? <>・{r.code}（預期「{r.expectedName}」）<b>不存在</b>：關鍵字 {r.keywords.join('、')} 的規則會失效（落入待確認）。請按上方「套用建議科目表」補齊。</>
+                    : <>・{r.code} 現名「{r.currentName}」，但匯入規則會把 <b>{r.keywords.join('、')}</b> 記到此編號（預期「{r.expectedName}」）。若意義不同，請改名此科目或告訴我調整規則。</>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
