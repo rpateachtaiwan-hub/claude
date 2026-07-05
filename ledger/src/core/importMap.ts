@@ -10,7 +10,31 @@
 // =============================================================================
 
 import { buildEntry } from './engine'
+import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
 import type { Account, JournalEntry } from './types'
+
+/** 名稱正規化（去空白/符號），科目名稱比對用。 */
+export function normAccountName(s: string): string {
+  return String(s).replace(/[\s/／\-‐–（）()．.]/g, '')
+}
+
+const PRESET_BY_CODE = new Map(UNIFIED_PRESET_ACCOUNTS.map((a) => [a.code, a]))
+
+/**
+ * 解析規則目標科目：規則寫的是「建議科目表的編號」，但使用者可能已改編號。
+ * 1) 先找名稱與建議科目相同的科目（編號可能不同）
+ * 2) 名稱找不到時，僅當該編號無建議名稱可比才直接用編號
+ *    （編號被「不同名稱」的科目佔用時視為語意衝突 → 不採用，讓該列落到後續判斷/待確認）
+ */
+export function resolveRuleTarget(presetCode: string, nameIndex: Map<string, string>, codes: Set<string>): string | null {
+  const preset = PRESET_BY_CODE.get(presetCode)
+  if (preset) {
+    const byName = nameIndex.get(normAccountName(preset.name))
+    if (byName) return byName
+    return null // 有預期名稱但科目表中不存在同名科目 → 規則暫時失效（避免記錯位置）
+  }
+  return codes.has(presetCode) ? presetCode : null
+}
 
 /** 關鍵字 → 非現金腳科目。最具體者放前面（子字串比對，先命中者勝）。 */
 export interface KeywordRule {
@@ -126,18 +150,19 @@ export const KEYWORD_RULES: KeywordRule[] = [
   { match: '代墊款', account: '6199', review: true, direction: 'out' },
 ]
 
-/** 以內容關鍵字配科目；僅在該科目存在於科目表時才採用。未命中回 null。 */
+/** 以內容關鍵字配科目；目標科目「先認名稱、再認編號」（使用者改過編號也能跟上）。未命中回 null。 */
 export function matchByDescription(
   desc: string,
   accounts: Account[],
   direction?: 'in' | 'out',
 ): { account: string; review: boolean } | null {
   const codes = new Set(accounts.map((a) => a.code))
+  const nameIndex = new Map(accounts.map((a) => [normAccountName(a.name), a.code]))
   for (const r of KEYWORD_RULES) {
     if (r.direction && direction && r.direction !== direction) continue
-    if (desc.includes(r.match) && codes.has(r.account)) {
-      return { account: r.account, review: !!r.review }
-    }
+    if (!desc.includes(r.match)) continue
+    const target = resolveRuleTarget(r.account, nameIndex, codes)
+    if (target) return { account: target, review: !!r.review }
   }
   return null
 }

@@ -65,10 +65,15 @@ export interface RuleTargetIssue {
   keywords: string[]
 }
 
-/** 檢查智慧匯入規則的目標科目：名稱與建議科目表不符（語意衝突）或不存在（規則失效）。 */
+/**
+ * 檢查智慧匯入規則的目標科目。規則採「先認名稱、再認編號」：
+ * 只要科目表中存在與建議科目「同名」的科目（編號可不同），規則即有效、不報警。
+ * 報警情況：同名科目不存在 —— 且原編號被不同名稱佔用（語意衝突）或原編號也不存在（規則失效）。
+ */
 export function ruleTargetIssues(accounts: Account[]): RuleTargetIssue[] {
   const presetByCode = new Map(UNIFIED_PRESET_ACCOUNTS.map((a) => [a.code, a]))
   const byCode = new Map(accounts.map((a) => [a.code, a]))
+  const names = new Set(accounts.map((a) => norm(a.name)))
   const kwByCode = new Map<string, string[]>()
   for (const r of KEYWORD_RULES) {
     const list = kwByCode.get(r.account) ?? []
@@ -79,12 +84,10 @@ export function ruleTargetIssues(accounts: Account[]): RuleTargetIssue[] {
   for (const code of kwByCode.keys()) {
     const expected = presetByCode.get(code)?.name
     if (!expected) continue
+    if (names.has(norm(expected))) continue // 同名科目存在（編號可能已改）→ 規則有效
     const cur = byCode.get(code)
-    if (!cur) {
-      out.push({ code, expectedName: expected, missing: true, keywords: kwByCode.get(code)! })
-    } else if (norm(cur.name) !== norm(expected)) {
-      out.push({ code, expectedName: expected, currentName: cur.name, missing: false, keywords: kwByCode.get(code)! })
-    }
+    if (cur) out.push({ code, expectedName: expected, currentName: cur.name, missing: false, keywords: kwByCode.get(code)! })
+    else out.push({ code, expectedName: expected, missing: true, keywords: kwByCode.get(code)! })
   }
   return out.sort((x, y) => x.code.localeCompare(y.code))
 }

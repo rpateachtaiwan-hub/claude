@@ -54,6 +54,18 @@ describe('關鍵字配科目', () => {
   it('未命中回 null', () => {
     expect(matchByDescription('莫名其妙的東西', accounts)).toBeNull()
   })
+  it('全表重編號但名稱不變 → 規則自動跟上（先認名稱）', () => {
+    const renum = accounts.map((a, i) => ({ ...a, code: `N${String(i).padStart(3, '0')}` }))
+    const m = matchByDescription('2604健保費', renum, 'out')
+    expect(m).not.toBeNull()
+    expect(renum.find((a) => a.code === m!.account)?.name).toBe('勞健保費')
+  })
+  it('語意衝突防護：編號被不同名稱佔用且無同名科目 → 規則不採用', () => {
+    // 6103 改名為 油料/交通費，且表中沒有任何「勞健保費」→ 健保費規則失效，落到 fallback
+    const chart = accounts.map((a) => (a.code === '6103' ? { ...a, name: '油料/交通費' } : a))
+    const m = matchByDescription('2604健保費', chart, 'out')
+    expect(m).toBeNull()
+  })
   it('期初餘額 → 權益(3202)，不進損益', () => {
     expect(matchByDescription('114/12/31餘額', accounts)?.account).toBe('3202')
     expect(isPnL('3202', accounts)).toBe(false)
