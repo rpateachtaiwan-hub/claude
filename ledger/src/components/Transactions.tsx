@@ -247,6 +247,15 @@ export default function Transactions() {
         </div>
       )}
 
+      <div className="flex items-center gap-1.5 text-[11px] text-gray-400">
+        <span>科目顏色：</span>
+        <span className="rounded px-1.5 py-0.5 bg-sky-50 text-sky-800">資產</span>
+        <span className="rounded px-1.5 py-0.5 bg-amber-50 text-amber-800">負債</span>
+        <span className="rounded px-1.5 py-0.5 bg-violet-50 text-violet-800">權益</span>
+        <span className="rounded px-1.5 py-0.5 bg-green-50 text-green-800">收入</span>
+        <span className="rounded px-1.5 py-0.5 bg-rose-50 text-rose-700">成本/費用</span>
+      </div>
+
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <table className="w-full min-w-[880px] text-sm">
           <thead>
@@ -338,20 +347,31 @@ const DateCell = React.memo(function DateCell(
   return <span className="cursor-pointer hover:bg-brand-soft rounded px-1 whitespace-nowrap" title="點擊修改日期" onClick={() => setEdit(true)}>{e.date} ✎</span>
 })
 
+// 科目分類色票：資產=藍、負債=琥珀、權益=紫、收入=綠、成本/費用=玫紅
+const CAT_CHIP: Record<string, string> = {
+  asset: 'bg-sky-50 text-sky-800',
+  liability: 'bg-amber-50 text-amber-800',
+  equity: 'bg-violet-50 text-violet-800',
+  revenue: 'bg-green-50 text-green-800',
+  expense: 'bg-rose-50 text-rose-700',
+}
+
 // 明細列內嵌：借（或貸）科目 + 金額。平常顯示文字，點擊才變成可搜尋下拉。
 const LegCell = React.memo(function LegCell(
   { e, side, accounts, onSet }: { e: JournalEntry; side: 'debit' | 'credit'; accounts: Account[]; onSet: (e: JournalEntry, side: 'debit' | 'credit', code: string) => void },
 ) {
   const [edit, setEdit] = useState(false)
-  const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const line = side === 'debit' ? e.lines.find((l) => l.debit > 0)! : e.lines.find((l) => l.credit > 0)!
   const amount = side === 'debit' ? line.debit : line.credit
+  const acc = accounts.find((a) => a.code === line.accountCode)
+  const name = acc?.name ?? line.accountCode
+  const chip = CAT_CHIP[acc?.category ?? ''] ?? 'bg-gray-100 text-gray-600'
 
   if (e.source === 'settlement') {
     return (
-      <div className="text-sm text-gray-600">
-        {accName(line.accountCode)}
-        <div className="tabular-nums text-gray-400">{formatTWD(amount)}</div>
+      <div>
+        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] leading-tight ${chip} opacity-80`}>{name}</span>
+        <div className="tabular-nums text-gray-500 text-sm text-right pr-1 mt-0.5">{formatTWD(amount)}</div>
       </div>
     )
   }
@@ -366,10 +386,12 @@ const LegCell = React.memo(function LegCell(
   }
 
   return (
-    <div className={`cursor-pointer rounded px-1 hover:bg-brand-soft ${e.needsReview ? 'text-amber-700' : 'text-gray-700'}`}
-      title="點擊修改科目" onClick={() => setEdit(true)}>
-      <div className="flex items-center gap-1 text-sm">{accName(line.accountCode)} <span className="text-gray-300">✎</span></div>
-      <div className="tabular-nums text-gray-500 text-sm">{formatTWD(amount)}</div>
+    <div className="cursor-pointer rounded px-1 py-0.5 hover:bg-brand-soft" title="點擊修改科目" onClick={() => setEdit(true)}>
+      <div className="flex items-center gap-1">
+        <span className={`inline-block rounded px-1.5 py-0.5 text-[13px] leading-tight ${chip}`}>{name}</span>
+        <span className="text-gray-300 text-xs">✎</span>
+      </div>
+      <div className="tabular-nums text-gray-600 text-sm text-right pr-1 mt-0.5">{formatTWD(amount)}</div>
     </div>
   )
 })
