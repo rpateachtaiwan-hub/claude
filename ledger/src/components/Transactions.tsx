@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { composeEntry, sourceFromLegs } from '../core/suggest'
+import { monthEndISO, parsePeriodEx } from '../core/importMap'
 import { buildEntry } from '../core/engine'
 import { classifyWithGemini } from '../core/ai'
 import { formatTWD } from '../core/money'
@@ -398,11 +399,25 @@ const LegCell = React.memo(function LegCell(
 })
 
 function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => void }) {
-  const { accounts, updateEntry, companies } = useLedger()
+  const { accounts, updateEntry, companies, splitEntryToAccrual, mergeAccrualPair } = useLedger()
   const sortedAccounts = useMemo(() => [...accounts].sort((a, b) => a.code.localeCompare(b.code)), [accounts])
   const isSettlement = entry.source === 'settlement'
+  const isAccrual = entry.source === 'accrual'
   const dr0 = entry.lines.find((l) => l.debit > 0)!
   const cr0 = entry.lines.find((l) => l.credit > 0)!
+
+  // 可拆應計條件：現金/手動分錄、一腳為銀行/現金、另一腳為損益科目
+  const byCode0 = new Map(accounts.map((a) => [a.code, a]))
+  const bankLeg0 = [dr0, cr0].find((l) => byCode0.get(l.accountCode)?.isCash)
+  const otherLeg0 = bankLeg0 === dr0 ? cr0 : dr0
+  const otherCat0 = byCode0.get(otherLeg0.accountCode)?.category
+  const canSplit = !isSettlement && !isAccrual && !!bankLeg0 && (otherCat0 === 'revenue' || otherCat0 === 'expense')
+  const [py0, pm0] = entry.date.split('-').map(Number)
+  const periodGuess = parsePeriodEx(entry.description, py0, pm0)
+  const defaultAccrualDate = periodGuess?.kind === 'month'
+    ? monthEndISO(periodGuess.year, periodGuess.month)
+    : monthEndISO(pm0 === 1 ? py0 - 1 : py0, pm0 === 1 ? 12 : pm0 - 1)
+  const [accrualDate, setAccrualDate] = useState(defaultAccrualDate)
 
   const [date, setDate] = useState(entry.date)
   const [description, setDescription] = useState(entry.description)
@@ -436,6 +451,22 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
   }
 
+  async function doSplit() {
+    setErr(null)
+    try {
+      await splitEntryToAccrual(entry.id, accrualDate)
+      onClose()
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+  }
+
+  async function doMerge() {
+    setErr(null)
+    try {
+      await mergeAccrualPair(entry.id)
+      onClose()
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -464,6 +495,38 @@ function EditModal({ entry, onClose }: { entry: JournalEntry; onClose: () => voi
             <L t="憑證編號"><input value={voucherNo} onChange={(e) => setVoucherNo(e.target.value)} className={inp} /></L>
           </>}
           <L t="備註"><input value={note} onChange={(e) => setNote(e.target.value)} className={inp} /></L>
+
+          {canSplit && (
+            <div className="border border-brand-light/40 bg-brand-soft/50 rounded-lg p-3 space-y-2">
+              <div className="text-xs font-medium text-brand-dark">跨期應計（複核時發現該歸屬到較早月份用）</div>
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                拆分後：<b>{accrualDate}</b> 認列應計（{otherCat0 === 'revenue' ? '借 應收帳款／貸 收入' : '借 費用／貸 應付帳款'}），
+                原付款日 <b>{entry.date}</b> 自動改為沖銷分錄，銀行餘額不變、損益回到正確月份。
+              </p>
+              <div className="flex items-center gap-2">
+                <input type="date" value={accrualDate} max={entry.date} onChange={(e) => setAccrualDate(e.target.value)}
+                  className="border border-gray-300 rounded px-2 py-1.5 text-sm" />
+                <button onClick={doSplit} className="px-3 py-1.5 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-dark">
+                  拆為應計＋自動沖銷
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isSettlement && entry.settles && (
+            <div className="border border-gray-200 bg-gray-50 rounded-lg p-3 space-y-2">
+              <div className="text-xs font-medium text-gray-600">取消應計拆分</div>
+              <p className="text-[11px] text-gray-500">此筆為沖銷分錄。若這筆其實不需跨期應計，可還原成單筆現金分錄（會一併刪除對應的應計分錄）。</p>
+              <button onClick={doMerge} className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs hover:bg-white">
+                還原為單筆現金分錄
+              </button>
+            </div>
+          )}
+
+          {isAccrual && (
+            <p className="text-[11px] text-gray-400">此筆為應計分錄。若要取消拆分，請開啟其對應的「沖銷」分錄操作還原。</p>
+          )}
+
           {err && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{err}</div>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-3 border-t sticky bottom-0 bg-white">

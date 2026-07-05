@@ -8,6 +8,7 @@ import { supabase, hasSupabase } from '../lib/supabase'
 import { DEFAULT_ACCOUNTS, PLACEHOLDER_ACCOUNTS } from '../core/accounts'
 import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
+import { mergeToCash, splitToAccrual } from '../core/accrualSplit'
 import type { ReconPoint } from '../core/recon'
 import { buildEntry, newId } from '../core/engine'
 import type { AiConfig } from '../core/ai'
@@ -64,6 +65,10 @@ interface LedgerState extends PersistShape {
   // 沖銷
   openItems: () => OpenItem[]
   settle: (itemId: string, amount: number, cashAccountCode: string, date: string) => Promise<void>
+  /** 複核時把現金分錄拆成「應計(指定日) + 沖銷(原付款日)」 */
+  splitEntryToAccrual: (entryId: string, accrualDate: string) => Promise<void>
+  /** 還原拆分：把「沖銷 + 對應應計」合併回單筆現金分錄 */
+  mergeAccrualPair: (settlementId: string) => Promise<void>
   // 批次匯入
   addEntriesBulk: (entries: JournalEntry[]) => Promise<void>
   addAccountsBulk: (accounts: Account[]) => Promise<void>
@@ -296,6 +301,39 @@ export const useLedger = create<LedgerState>()((set, get) => ({
     set({ entries })
     if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
     else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  splitEntryToAccrual: async (entryId, accrualDate) => {
+    const e = get().entries.find((x) => x.id === entryId)
+    if (!e) throw new Error('找不到分錄')
+    const { accrual, settlement } = splitToAccrual(e, accrualDate, get().accounts)
+    const stamped = { ...accrual, seq: maxSeq(get().entries) + 1 }
+    const entries = get().entries.map((x) => (x.id === entryId ? settlement : x)).concat(stamped)
+    set({ entries })
+    if (get().usingSupabase) {
+      await supabase.from('entries').upsert({ id: settlement.id, date: settlement.date, data: settlement })
+      await supabase.from('entries').insert({ id: stamped.id, date: stamped.date, data: stamped })
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
+  },
+
+  mergeAccrualPair: async (settlementId) => {
+    const s = get().entries.find((x) => x.id === settlementId)
+    if (!s?.settles) throw new Error('此筆非沖銷分錄')
+    const a = get().entries.find((x) => x.id === s.settles)
+    if (!a) throw new Error('找不到對應的應計分錄')
+    const others = get().entries.filter((x) => x.settles === a.id && x.id !== s.id)
+    if (others.length) throw new Error('該應計有多筆沖銷（部分沖銷），不可自動還原')
+    const merged = mergeToCash(s, a, get().accounts)
+    const entries = get().entries.filter((x) => x.id !== a.id).map((x) => (x.id === s.id ? merged : x))
+    set({ entries })
+    if (get().usingSupabase) {
+      await supabase.from('entries').upsert({ id: merged.id, date: merged.date, data: merged })
+      await supabase.from('entries').delete().eq('id', a.id)
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
   },
 
   addEntriesBulk: async (newEntries) => {
