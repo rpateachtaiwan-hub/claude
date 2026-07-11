@@ -53,6 +53,7 @@ export default function App() {
             {!usingSupabase && <span className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">示範模式（存本機）</span>}
             {hasSupabase && auth.authed && (
               <>
+                {auth.role === 'viewer' && <span className="text-[11px] text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-2.5 py-1">檢視者（唯讀）</span>}
                 {auth.email && <span className="text-[11px] text-gray-400 hidden sm:inline">{auth.email}</span>}
                 <button onClick={() => auth.logout()} className="text-[11px] text-gray-500 border border-gray-300 rounded-full px-2.5 py-1 hover:bg-gray-50">登出</button>
               </>

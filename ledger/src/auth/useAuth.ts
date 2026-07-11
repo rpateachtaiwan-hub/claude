@@ -5,6 +5,8 @@ interface AuthState {
   ready: boolean // 是否已完成 session 還原
   authed: boolean
   email: string | null
+  /** 角色：admin（可管理使用者）或 viewer（唯讀，需搭配 roles.sql 的 RLS 才強制生效）。未設定視為 admin。 */
+  role: 'admin' | 'viewer'
   error: string
   /** 使用者點了「忘記密碼」信中的連結進站 → 強制先設定新密碼 */
   recovery: boolean
@@ -23,6 +25,7 @@ export const useAuth = create<AuthState>((set) => ({
   ready: false,
   authed: false,
   email: null,
+  role: 'admin',
   error: '',
   recovery: false,
 
@@ -32,11 +35,13 @@ export const useAuth = create<AuthState>((set) => ({
       set({ ready: true, authed: true, email: null })
       return
     }
+    const roleOf = (u: { app_metadata?: Record<string, unknown> } | null | undefined): 'admin' | 'viewer' =>
+      u?.app_metadata?.role === 'viewer' ? 'viewer' : 'admin'
     const { data } = await supabase.auth.getSession()
-    set({ ready: true, authed: !!data.session, email: data.session?.user?.email ?? null })
+    set({ ready: true, authed: !!data.session, email: data.session?.user?.email ?? null, role: roleOf(data.session?.user) })
     supabase.auth.onAuthStateChange((event, s) => {
       if (event === 'PASSWORD_RECOVERY') set({ recovery: true })
-      set({ authed: !!s, email: s?.user?.email ?? null })
+      set({ authed: !!s, email: s?.user?.email ?? null, role: roleOf(s?.user) })
     })
   },
 

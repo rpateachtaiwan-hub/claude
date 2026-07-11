@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { useAuth } from '../auth/useAuth'
 import { hasSupabase } from '../lib/supabase'
+import { adminUsersCall, type ManagedUser } from '../lib/adminApi'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
 import { findSimilarAccounts, ruleTargetIssues, structuralIssues } from '../core/accountAudit'
@@ -145,18 +146,36 @@ export default function Settings() {
   )
 }
 
-/** 使用者與安全：新增使用者（signUp）、修改自己的密碼。刪除使用者需至 Supabase 後台（前端金鑰無權限）。 */
+/** 使用者與安全：使用者清單（列出/建立/改權限/重設密碼/刪除，經 Netlify Function 以 service_role 執行）＋修改自己的密碼。 */
 function UserSecurity() {
-  const { email, updatePassword, createUser } = useAuth()
+  const { email, role, updatePassword, createUser } = useAuth()
 
   const [pw1, setPw1] = useState('')
   const [pw2, setPw2] = useState('')
   const [pwMsg, setPwMsg] = useState<string | null>(null)
 
+  const [users, setUsers] = useState<ManagedUser[] | null>(null)
+  const [callerId, setCallerId] = useState('')
+  const [apiState, setApiState] = useState<'loading' | 'ready' | 'unavailable' | 'forbidden'>('loading')
+  const [listMsg, setListMsg] = useState<string | null>(null)
+
   const [newEmail, setNewEmail] = useState('')
   const [newPw, setNewPw] = useState('Routor@2026')
+  const [newRole, setNewRole] = useState<'admin' | 'viewer'>('admin')
   const [addMsg, setAddMsg] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const loadUsers = React.useCallback(async () => {
+    const r = await adminUsersCall<{ users: ManagedUser[]; callerId: string }>('list')
+    if (r.ok && r.data) {
+      setUsers(r.data.users.sort((a, b) => a.email.localeCompare(b.email)))
+      setCallerId(r.data.callerId)
+      setApiState('ready')
+    } else if (r.unavailable) setApiState('unavailable')
+    else if (r.error?.includes('僅管理員')) setApiState('forbidden')
+    else { setApiState('unavailable'); setListMsg(r.error ?? null) }
+  }, [])
+  React.useEffect(() => { loadUsers() }, [loadUsers])
 
   async function changePw() {
     setPwMsg(null)
@@ -173,25 +192,48 @@ function UserSecurity() {
     setAddMsg(null)
     if (!newEmail.trim() || newPw.length < 6) { setAddMsg('請輸入 Email，密碼至少 6 字元。'); return }
     setBusy(true)
-    const err = await createUser(newEmail, newPw)
-    setBusy(false)
-    if (!err) {
-      setAddMsg(`✓ 已建立 ${newEmail.trim()}，可用預設密碼登入。請提醒對方登入後到「設定」改密碼（或用登入頁「忘記密碼」自設）。`)
-      setNewEmail('')
-    } else if (err === 'NEEDS_CONFIRM') {
-      setAddMsg(`已建立 ${newEmail.trim()}，但你的 Supabase 專案啟用了信箱驗證：對方需先點驗證信才能登入。若想免驗證，至 Supabase → Authentication → Sign In / Up 關閉「Confirm email」。`)
+    if (apiState === 'ready') {
+      const r = await adminUsersCall('create', { email: newEmail.trim(), password: newPw, role: newRole })
+      setBusy(false)
+      if (r.ok) { setAddMsg(`✓ 已建立 ${newEmail.trim()}（${newRole === 'viewer' ? '檢視者' : '管理員'}），可直接以預設密碼登入。`); setNewEmail(''); loadUsers() }
+      else setAddMsg(`建立失敗：${r.error}`)
     } else {
-      setAddMsg(`建立失敗：${err}`)
+      // API 未設定時退回 signUp（受專案「信箱驗證」設定影響）
+      const err = await createUser(newEmail, newPw)
+      setBusy(false)
+      if (!err) setAddMsg(`✓ 已建立 ${newEmail.trim()}，可用預設密碼登入。`)
+      else if (err === 'NEEDS_CONFIRM') setAddMsg(`已建立 ${newEmail.trim()}，但需先點信箱驗證信才能登入。`)
+      else setAddMsg(`建立失敗：${err}`)
     }
   }
+
+  async function setUserRole(u: ManagedUser, r: 'admin' | 'viewer') {
+    const res = await adminUsersCall('setRole', { userId: u.id, role: r })
+    if (!res.ok) alert(res.error)
+    loadUsers()
+  }
+  async function resetUserPw(u: ManagedUser) {
+    const pw = prompt(`為 ${u.email} 設定新密碼（至少 6 字元）：`, 'Routor@2026')
+    if (!pw) return
+    const res = await adminUsersCall('setPassword', { userId: u.id, password: pw })
+    alert(res.ok ? `✓ 已重設 ${u.email} 的密碼。請提醒對方登入後自行變更。` : `失敗：${res.error}`)
+  }
+  async function deleteUser(u: ManagedUser) {
+    if (!confirm(`確定刪除使用者 ${u.email}？此動作無法復原（其記過的帳仍會保留）。`)) return
+    const res = await adminUsersCall('delete', { userId: u.id })
+    if (!res.ok) alert(res.error)
+    loadUsers()
+  }
+
+  const fmtTime = (iso: string | null) => (iso ? iso.slice(0, 16).replace('T', ' ') : '—')
 
   return (
     <section>
       <h2 className="text-sm font-bold text-gray-900 mb-2">使用者與安全</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <div className="space-y-3">
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <div className="text-sm font-medium text-gray-700">修改我的密碼<span className="ml-2 text-xs text-gray-400">{email}</span></div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 max-w-md">
             <input type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="新密碼" autoComplete="new-password" className={inp} />
             <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="再輸入一次" autoComplete="new-password" className={inp} />
           </div>
@@ -200,16 +242,88 @@ function UserSecurity() {
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-          <div className="text-sm font-medium text-gray-700">新增使用者</div>
-          <div className="grid grid-cols-2 gap-2">
-            <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@example.com" className={inp} />
-            <input value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="預設密碼" className={inp} />
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-gray-700">使用者清單</div>
+            {apiState === 'ready' && <button onClick={loadUsers} className="text-xs text-gray-400 hover:text-gray-600">↻ 重新整理</button>}
           </div>
-          <button onClick={addUser} disabled={busy || !newEmail} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">建立帳號</button>
-          {addMsg && <p className={`text-xs leading-relaxed ${addMsg.startsWith('✓') ? 'text-green-700' : 'text-amber-700'}`}>{addMsg}</p>}
-          <p className="text-[11px] text-gray-400 leading-relaxed">
-            所有登入者目前權限相同（可讀寫全部資料）。<b>移除使用者</b>請至 Supabase 後台 → Authentication → Users（前端金鑰無此權限，屬安全設計）。
-          </p>
+
+          {apiState === 'loading' && <p className="text-xs text-gray-400">載入中…</p>}
+
+          {apiState === 'forbidden' && (
+            <p className="text-xs text-violet-700 bg-violet-50 border border-violet-200 rounded p-2">你是「檢視者」，僅管理員可管理使用者。</p>
+          )}
+
+          {apiState === 'unavailable' && (
+            <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 leading-relaxed space-y-1">
+              <b>使用者清單需要一次性設定（約 2 分鐘）：</b>
+              <div>1. Supabase Dashboard → Settings → API → 複製 <b>service_role</b> 金鑰（secret）</div>
+              <div>2. Netlify → Site configuration → Environment variables → 新增 <b>SUPABASE_SERVICE_ROLE_KEY</b> ＝ 該金鑰</div>
+              <div>3. Netlify → Deploys → Trigger deploy 重新部署一次</div>
+              <div>完成後此處會出現完整清單（權限/重設密碼/刪除）。service_role 只存在伺服器端，不會進到瀏覽器。</div>
+              {listMsg && <div className="text-red-600">{listMsg}</div>}
+            </div>
+          )}
+
+          {apiState === 'ready' && users && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead><tr className="bg-gray-50 text-gray-500 text-xs">
+                  <th className="px-3 py-2 text-left">使用者帳號</th>
+                  <th className="px-3 py-2 text-left">權限</th>
+                  <th className="px-3 py-2 text-left">建立時間</th>
+                  <th className="px-3 py-2 text-left">最後登入</th>
+                  <th className="px-3 py-2 text-center">重設密碼</th>
+                  <th className="px-3 py-2 text-center">刪除</th>
+                </tr></thead>
+                <tbody>
+                  {users.map((u) => {
+                    const self = u.id === callerId
+                    return (
+                      <tr key={u.id} className="border-t border-gray-100">
+                        <td className="px-3 py-2 text-gray-800">{u.email}{self && <span className="ml-1 text-[10px] text-brand bg-brand-soft rounded px-1">你</span>}</td>
+                        <td className="px-3 py-2">
+                          <select value={u.role} disabled={self} title={self ? '不可變更自己的權限' : ''}
+                            onChange={(e) => setUserRole(u, e.target.value as 'admin' | 'viewer')}
+                            className="border border-gray-300 rounded px-1.5 py-1 text-xs disabled:opacity-50 disabled:bg-gray-50">
+                            <option value="admin">管理員</option>
+                            <option value="viewer">檢視者(唯讀)</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{fmtTime(u.createdAt)}</td>
+                        <td className="px-3 py-2 text-gray-500 text-xs whitespace-nowrap">{fmtTime(u.lastSignInAt)}</td>
+                        <td className="px-3 py-2 text-center"><button onClick={() => resetUserPw(u)} className="text-gray-400 hover:text-brand" title="重設此人密碼">🔑</button></td>
+                        <td className="px-3 py-2 text-center">
+                          <button onClick={() => deleteUser(u)} disabled={self} title={self ? '不可刪除自己' : '刪除使用者'}
+                            className="text-gray-300 hover:text-red-500 disabled:opacity-30">✕</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {(apiState === 'ready' || apiState === 'unavailable') && (
+            <div className="border-t border-gray-100 pt-3 space-y-2">
+              <div className="text-xs font-medium text-gray-600">新增使用者</div>
+              <div className="flex flex-wrap gap-2 items-center">
+                <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@example.com" className={`${inp} max-w-[220px]`} />
+                <input value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="預設密碼" className={`${inp} max-w-[150px]`} />
+                {apiState === 'ready' && (
+                  <select value={newRole} onChange={(e) => setNewRole(e.target.value as 'admin' | 'viewer')} className="border border-gray-300 rounded px-2 py-2 text-sm">
+                    <option value="admin">管理員</option>
+                    <option value="viewer">檢視者(唯讀)</option>
+                  </select>
+                )}
+                <button onClick={addUser} disabled={busy || !newEmail} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">建立帳號</button>
+              </div>
+              {addMsg && <p className={`text-xs leading-relaxed ${addMsg.startsWith('✓') ? 'text-green-700' : 'text-amber-700'}`}>{addMsg}</p>}
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                「檢視者」要真正唯讀，需在 Supabase SQL Editor 執行一次 <b>supabase/roles.sql</b>（未執行前僅為標記）。目前登入者：{role === 'admin' ? '管理員' : '檢視者'}。
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </section>
