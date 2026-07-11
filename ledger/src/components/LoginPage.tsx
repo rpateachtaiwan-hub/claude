@@ -3,10 +3,11 @@ import { useAuth } from '../auth/useAuth'
 import Logo from './Logo'
 
 export default function LoginPage() {
-  const { login, error } = useAuth()
+  const { login, error, resetPassword } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resetMsg, setResetMsg] = useState<string | null>(null)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -14,6 +15,15 @@ export default function LoginPage() {
     await login(email.trim(), password)
     setLoading(false)
     setPassword('')
+  }
+
+  async function forgot() {
+    setResetMsg(null)
+    if (!email.trim()) { setResetMsg('請先在上方輸入你的電子郵件，再點「忘記密碼」。'); return }
+    setLoading(true)
+    const err = await resetPassword(email)
+    setLoading(false)
+    setResetMsg(err ? `寄送失敗：${err}` : `重設密碼信已寄到 ${email.trim()}，請點信中連結設定新密碼（也檢查垃圾信件夾）。`)
   }
 
   return (
@@ -33,11 +43,15 @@ export default function LoginPage() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
           </div>
           {error && <p className="text-red-500 text-xs">{error}</p>}
+          {resetMsg && <p className="text-xs text-brand-dark bg-brand-soft rounded p-2 leading-relaxed">{resetMsg}</p>}
           <button type="submit" disabled={loading || !email || !password}
             className="w-full bg-brand hover:bg-brand-dark disabled:opacity-50 text-white font-medium py-2.5 rounded-lg text-sm">
-            {loading ? '登入中…' : '登入'}
+            {loading ? '處理中…' : '登入'}
           </button>
-          <p className="text-[11px] text-gray-400 text-center">帳號由管理員於 Supabase 後台建立 · 請勿在公用電腦使用</p>
+          <div className="flex items-center justify-between text-[11px]">
+            <button type="button" onClick={forgot} disabled={loading} className="text-brand hover:text-brand-dark underline">忘記密碼？</button>
+            <span className="text-gray-400">請勿在公用電腦使用</span>
+          </div>
         </form>
       </div>
     </div>

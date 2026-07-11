@@ -10,6 +10,7 @@ import Settlement from './components/Settlement'
 import ImportData from './components/ImportData'
 import Logo from './components/Logo'
 import LoginPage from './components/LoginPage'
+import ResetPasswordPage from './components/ResetPasswordPage'
 
 type Tab = 'entry' | 'settle' | 'list' | 'reports' | 'import' | 'settings'
 const TABS: { key: Tab; label: string }[] = [
@@ -38,6 +39,9 @@ export default function App() {
   }
   if (hasSupabase && !auth.authed) {
     return <LoginPage />
+  }
+  if (hasSupabase && auth.recovery) {
+    return <ResetPasswordPage />
   }
 
   return (

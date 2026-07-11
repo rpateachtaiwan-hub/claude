@@ -1,5 +1,7 @@
 import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
+import { useAuth } from '../auth/useAuth'
+import { hasSupabase } from '../lib/supabase'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
 import { findSimilarAccounts, ruleTargetIssues, structuralIssues } from '../core/accountAudit'
@@ -45,6 +47,8 @@ export default function Settings() {
 
   return (
     <div className="w-full p-4 sm:p-6 space-y-6">
+      {hasSupabase && <UserSecurity />}
+
       {/* 公司 */}
       <section>
         <h2 className="text-sm font-bold text-gray-900 mb-2">公司</h2>
@@ -138,6 +142,77 @@ export default function Settings() {
 
       {(adding || editing) && <AccountModal account={editing} onClose={() => { setAdding(false); setEditing(null) }} onSave={saveAccount} />}
     </div>
+  )
+}
+
+/** 使用者與安全：新增使用者（signUp）、修改自己的密碼。刪除使用者需至 Supabase 後台（前端金鑰無權限）。 */
+function UserSecurity() {
+  const { email, updatePassword, createUser } = useAuth()
+
+  const [pw1, setPw1] = useState('')
+  const [pw2, setPw2] = useState('')
+  const [pwMsg, setPwMsg] = useState<string | null>(null)
+
+  const [newEmail, setNewEmail] = useState('')
+  const [newPw, setNewPw] = useState('Routor@2026')
+  const [addMsg, setAddMsg] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function changePw() {
+    setPwMsg(null)
+    if (pw1.length < 6) { setPwMsg('密碼至少 6 個字元。'); return }
+    if (pw1 !== pw2) { setPwMsg('兩次輸入的密碼不一致。'); return }
+    setBusy(true)
+    const err = await updatePassword(pw1)
+    setBusy(false)
+    setPwMsg(err ? `變更失敗：${err}` : '✓ 密碼已變更。')
+    if (!err) { setPw1(''); setPw2('') }
+  }
+
+  async function addUser() {
+    setAddMsg(null)
+    if (!newEmail.trim() || newPw.length < 6) { setAddMsg('請輸入 Email，密碼至少 6 字元。'); return }
+    setBusy(true)
+    const err = await createUser(newEmail, newPw)
+    setBusy(false)
+    if (!err) {
+      setAddMsg(`✓ 已建立 ${newEmail.trim()}，可用預設密碼登入。請提醒對方登入後到「設定」改密碼（或用登入頁「忘記密碼」自設）。`)
+      setNewEmail('')
+    } else if (err === 'NEEDS_CONFIRM') {
+      setAddMsg(`已建立 ${newEmail.trim()}，但你的 Supabase 專案啟用了信箱驗證：對方需先點驗證信才能登入。若想免驗證，至 Supabase → Authentication → Sign In / Up 關閉「Confirm email」。`)
+    } else {
+      setAddMsg(`建立失敗：${err}`)
+    }
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-bold text-gray-900 mb-2">使用者與安全</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+          <div className="text-sm font-medium text-gray-700">修改我的密碼<span className="ml-2 text-xs text-gray-400">{email}</span></div>
+          <div className="grid grid-cols-2 gap-2">
+            <input type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="新密碼" autoComplete="new-password" className={inp} />
+            <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="再輸入一次" autoComplete="new-password" className={inp} />
+          </div>
+          <button onClick={changePw} disabled={busy || !pw1 || !pw2} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">變更密碼</button>
+          {pwMsg && <p className={`text-xs ${pwMsg.startsWith('✓') ? 'text-green-700' : 'text-red-600'}`}>{pwMsg}</p>}
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+          <div className="text-sm font-medium text-gray-700">新增使用者</div>
+          <div className="grid grid-cols-2 gap-2">
+            <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="email@example.com" className={inp} />
+            <input value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="預設密碼" className={inp} />
+          </div>
+          <button onClick={addUser} disabled={busy || !newEmail} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">建立帳號</button>
+          {addMsg && <p className={`text-xs leading-relaxed ${addMsg.startsWith('✓') ? 'text-green-700' : 'text-amber-700'}`}>{addMsg}</p>}
+          <p className="text-[11px] text-gray-400 leading-relaxed">
+            所有登入者目前權限相同（可讀寫全部資料）。<b>移除使用者</b>請至 Supabase 後台 → Authentication → Users（前端金鑰無此權限，屬安全設計）。
+          </p>
+        </div>
+      </div>
+    </section>
   )
 }
 
