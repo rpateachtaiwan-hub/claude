@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
 import { rowToEntries, planRow, existingDupKeys, consumeDup, isOpeningBalanceRow, type RowInput, type RowPlan } from '../core/importMap'
+import { supabase, hasSupabase } from '../lib/supabase'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
 import { fileToRows } from '../lib/xlsx'
@@ -65,6 +66,8 @@ function ImportTx() {
   const [catOverride, setCatOverride] = useState<Record<string, string>>({})
   const [accrualOn, setAccrualOn] = useState(true)
   const [dedupOn, setDedupOn] = useState(true)
+  /** 若本批資料來自機器人銀行明細暫存區，記錄其 id 清單；匯入成功後標記已入帳 */
+  const [bankBatch, setBankBatch] = useState<{ ids: number[]; label: string } | null>(null)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash)
 
@@ -79,7 +82,11 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setRawRows(rows) }
+
+  function handleBank(rows: string[][], batch: { ids: number[]; label: string }) {
+    setDone(null); setCatOverride({}); setBankBatch(batch); setRawRows(rows)
+  }
 
   // 檔案中出現的不重複「類別」值
   const cats = React.useMemo(() => {
@@ -113,7 +120,13 @@ function ImportTx() {
       const review = entries.filter((e) => e.needsReview).length
       const accr = parsed.accrualCount > 0 ? `，含 ${parsed.accrualCount} 筆跨期自動拆應計` : ''
       const dup = parsed.duplicateCount > 0 ? `；略過已存在 ${parsed.duplicateCount} 筆` : ''
-      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}`)
+      let bankNote = ''
+      if (bankBatch) {
+        const { error } = await supabase.from('bank_transactions').update({ status: 'matched' }).in('id', bankBatch.ids)
+        bankNote = error ? `；⚠ 銀行明細標記失敗（${error.message}），下次載入可能重複出現` : '；銀行明細已標記入帳'
+        setBankBatch(null)
+      }
+      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}${bankNote}`)
       setRawRows(null)
     } finally { setBusy(false) }
   }
@@ -167,6 +180,9 @@ function ImportTx() {
       </div>
 
       <FileBox onRows={handle} />
+
+      {hasSupabase && <BankFetch onLoad={handleBank} />}
+      {bankBatch && <div className="text-xs text-brand bg-brand-soft border border-brand-light/40 rounded-lg px-3 py-2">目前預覽的是機器人抓回的銀行明細：{bankBatch.label}（{bankBatch.ids.length} 筆）。確認匯入後會自動標記為已入帳。</div>}
 
       {parsed?.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
 
@@ -475,4 +491,83 @@ function mapAccountRows(rows: string[][]): Account[] {
     out.push({ code, name, category, normalBalance, isCash, isOpenItem, active: true })
   }
   return out
+}
+
+// ── 從機器人銀行明細暫存區載入（bank_transactions，UiPath 每日匯入）──────────
+interface BankTxRow {
+  id: number
+  company_no: string
+  company_name: string | null
+  bank_account_no: string
+  tx_date: string
+  withdrawal: number
+  deposit: number
+  summary: string | null
+  counterparty_account: string | null
+  memo: string | null
+  branch: string | null
+}
+
+interface BankGroup { acct: string; company: string; rows: BankTxRow[] }
+
+function BankFetch({ onLoad }: { onLoad: (rows: string[][], batch: { ids: number[]; label: string }) => void }) {
+  const [groups, setGroups] = useState<BankGroup[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function fetchGroups() {
+    setBusy(true); setErr(null)
+    const { data, error } = await supabase
+      .from('bank_transactions')
+      .select('id, company_no, company_name, bank_account_no, tx_date, withdrawal, deposit, summary, counterparty_account, memo, branch')
+      .eq('status', 'unmatched')
+      .order('tx_date').order('tx_time')
+      .limit(2000)
+    if (error) { setErr(`讀取失敗：${error.message}`); setBusy(false); return }
+    const by = new Map<string, BankTxRow[]>()
+    for (const r of (data ?? []) as BankTxRow[]) {
+      const k = r.bank_account_no
+      if (!by.has(k)) by.set(k, [])
+      by.get(k)!.push(r)
+    }
+    setGroups([...by.entries()].map(([acct, rows]) => ({ acct, company: rows[0].company_name ?? rows[0].company_no, rows })))
+    setBusy(false)
+  }
+
+  function load(g: BankGroup) {
+    const header = ['日期', '備註', '存入金額', '提出金額', '對方帳號', '交易分行']
+    const rows = g.rows.map((r) => [
+      r.tx_date,
+      [r.summary, r.memo].filter(Boolean).join(' ') || '銀行交易',
+      r.deposit > 0 ? String(r.deposit) : '',
+      r.withdrawal > 0 ? String(r.withdrawal) : '',
+      r.counterparty_account ?? '',
+      r.branch ?? '',
+    ])
+    onLoad([header, ...rows], { ids: g.rows.map((r) => r.id), label: `${g.company} ${g.acct}` })
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium text-gray-700">或：載入機器人抓回的銀行明細</div>
+        <button onClick={fetchGroups} disabled={busy} className="text-sm text-brand hover:underline disabled:opacity-50">
+          {busy ? '讀取中…' : groups === null ? '檢查待入帳明細' : '重新整理'}
+        </button>
+      </div>
+      {err && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">{err}</div>}
+      {groups !== null && groups.length === 0 && <div className="text-xs text-gray-400">目前沒有待入帳的銀行明細。機器人匯入後會出現在這裡。</div>}
+      {groups !== null && groups.length > 0 && (
+        <div className="space-y-1.5">
+          {groups.map((g) => (
+            <div key={g.acct} className="flex items-center justify-between gap-2 text-sm border border-gray-100 rounded-lg px-3 py-2">
+              <span className="text-gray-700 truncate">{g.company} · 帳號 {g.acct} · <b className="text-brand">{g.rows.length}</b> 筆（{g.rows[0].tx_date} ~ {g.rows[g.rows.length - 1].tx_date}）</span>
+              <button onClick={() => load(g)} className="px-3 py-1.5 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand-dark whitespace-nowrap">載入預覽</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-gray-400">載入後請在上方選好「公司」與對應的「銀行帳戶科目」再確認匯入；匯入成功會自動把這批明細標記為已入帳，之後不會重複出現。</p>
+    </div>
+  )
 }
