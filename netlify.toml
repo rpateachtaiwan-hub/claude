@@ -1,0 +1,17 @@
+# Netlify 部署設定（前端：lute-travel，Vite + React SPA）
+# 資料庫/登入/儲存：Supabase（環境變數在 Netlify 後台設定，勿寫死於此）
+
+[build]
+  base = "lute-travel"          # 專案根在子目錄
+  command = "npm run build"     # tsc + vite build
+  publish = "dist"             # 相對於 base，產出在 lute-travel/dist
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA 轉址：react-router 用 BrowserRouter，所有路徑都回 index.html
+# （否則重新整理 /accounting 之類的子頁會 404）
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

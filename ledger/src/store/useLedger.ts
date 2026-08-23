@@ -1,0 +1,475 @@
+// =============================================================================
+// 輕記帳 — 前端狀態 (zustand)
+// 示範模式：資料存 localStorage。設定 Supabase 後：讀寫雲端資料表。
+// =============================================================================
+
+import { create } from 'zustand'
+import { supabase, hasSupabase } from '../lib/supabase'
+import { DEFAULT_ACCOUNTS, PLACEHOLDER_ACCOUNTS } from '../core/accounts'
+import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
+import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
+import { mergeToCash, splitToAccrual } from '../core/accrualSplit'
+import type { ReconPoint } from '../core/recon'
+import { buildEntry, newId } from '../core/engine'
+import type { AiConfig } from '../core/ai'
+import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
+
+const LS_KEY = 'qing-ledger-v1'
+const LS_AI = 'qing-ledger-ai'
+const DEFAULT_AI: AiConfig = { enabled: true, model: 'gemini-2.0-flash', apiKey: '' }
+
+interface PersistShape {
+  accounts: Account[]
+  rules: Rule[]
+  entries: JournalEntry[]
+  companies: string[]
+}
+
+/** 日記帳輸入：直接指定借/貸科目與金額 */
+export interface JournalInput {
+  date: string
+  company?: string
+  description: string
+  debitCode: string
+  creditCode: string
+  amount: number
+  voucherNo?: string
+  note?: string
+}
+
+interface LedgerState extends PersistShape {
+  ready: boolean
+  usingSupabase: boolean
+  aiConfig: AiConfig
+  /** 復原堆疊（保留最近 10 步交易異動；記憶體內，重新整理後清空） */
+  undoStack: { label: string; entries: JournalEntry[] }[]
+  /** 復原上一步交易異動 */
+  undo: () => Promise<void>
+  /** 銀行對帳點（雲端存 rules 表、本機存獨立 key） */
+  reconPoints: ReconPoint[]
+  addReconPoint: (p: Omit<ReconPoint, 'id' | 'kind' | 'createdAt'>) => Promise<void>
+  deleteReconPoint: (id: string) => Promise<void>
+
+  init: () => Promise<void>
+  /** 離線/無金鑰時的預設建議（不含學習規則） */
+  preview: (input: QuickInput) => Suggestion
+  /** 記一筆：以最終選定的非現金腳科目過帳 */
+  commit: (input: QuickInput, chosenAccountCode: string) => Promise<JournalEntry>
+  /** 日記帳：直接指定借/貸科目與金額過帳 */
+  postJournal: (j: JournalInput) => Promise<JournalEntry>
+  updateEntry: (entry: JournalEntry) => Promise<void>
+  updateEntriesBulk: (entries: JournalEntry[]) => Promise<void>
+  deleteEntry: (id: string) => Promise<void>
+  deleteEntriesBulk: (ids: string[]) => Promise<void>
+  addAccount: (a: Account) => Promise<void>
+  /** 編輯科目（含改編號：自動把引用舊編號的分錄與對帳點改到新編號） */
+  updateAccount: (oldCode: string, a: Account) => Promise<void>
+  deleteAccount: (code: string) => Promise<void>
+  addCompany: (name: string) => Promise<void>
+  deleteCompany: (name: string) => Promise<void>
+  setAiConfig: (cfg: AiConfig) => void
+  // 沖銷
+  openItems: () => OpenItem[]
+  settle: (itemId: string, amount: number, cashAccountCode: string, date: string) => Promise<void>
+  /** 複核時把現金分錄拆成「應計(指定日) + 沖銷(原付款日)」 */
+  splitEntryToAccrual: (entryId: string, accrualDate: string) => Promise<void>
+  /** 還原拆分：把「沖銷 + 對應應計」合併回單筆現金分錄 */
+  mergeAccrualPair: (settlementId: string) => Promise<void>
+  // 批次匯入
+  addEntriesBulk: (entries: JournalEntry[]) => Promise<void>
+  addAccountsBulk: (accounts: Account[]) => Promise<void>
+  /** 為尚無流水號的舊資料補編號（依日期、建立時間排序） */
+  backfillSeq: () => Promise<number>
+}
+
+/** 取得目前最大流水號（無資料則 0） */
+function maxSeq(entries: JournalEntry[]): number {
+  let m = 0
+  for (const e of entries) if (typeof e.seq === 'number' && e.seq > m) m = e.seq
+  return m
+}
+
+function loadAi(): AiConfig {
+  try {
+    const raw = localStorage.getItem(LS_AI)
+    return raw ? { ...DEFAULT_AI, ...JSON.parse(raw) } : DEFAULT_AI
+  } catch {
+    return DEFAULT_AI
+  }
+}
+
+/** 確保「待確認」等預設科目一定在清單中（避免顯示成代號） */
+function withPlaceholders(accs: Account[]): Account[] {
+  const codes = new Set(accs.map((a) => a.code))
+  return [...accs, ...PLACEHOLDER_ACCOUNTS.filter((p) => !codes.has(p.code))]
+}
+
+const LS_RECON = 'qing-ledger-recon'
+function loadReconLocal(): ReconPoint[] {
+  try {
+    const raw = localStorage.getItem(LS_RECON)
+    return raw ? (JSON.parse(raw) as ReconPoint[]) : []
+  } catch {
+    return []
+  }
+}
+function saveReconLocal(pts: ReconPoint[]) {
+  localStorage.setItem(LS_RECON, JSON.stringify(pts))
+}
+
+function loadLocal(): PersistShape | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    return raw ? (JSON.parse(raw) as PersistShape) : null
+  } catch {
+    return null
+  }
+}
+function saveLocal(s: PersistShape) {
+  localStorage.setItem(LS_KEY, JSON.stringify(s))
+}
+
+export const useLedger = create<LedgerState>()((set, get) => {
+  /** 交易異動前呼叫：快照目前 entries 供復原（物件皆不可變，直接存參考即可） */
+  const pushUndo = (label: string) => {
+    const stack = [...get().undoStack, { label, entries: get().entries }]
+    while (stack.length > 10) stack.shift()
+    set({ undoStack: stack })
+  }
+
+  return {
+  ready: false,
+  usingSupabase: false,
+  aiConfig: DEFAULT_AI,
+  undoStack: [],
+  accounts: [],
+  rules: [],
+  reconPoints: [],
+  entries: [],
+  companies: [],
+
+  undo: async () => {
+    const stack = get().undoStack
+    if (!stack.length) return
+    const target = stack[stack.length - 1].entries
+    const before = get().entries
+    set({ entries: target, undoStack: stack.slice(0, -1) })
+    if (get().usingSupabase) {
+      // 差異同步：新加的刪掉、被改/被刪的還原
+      const targetMap = new Map(target.map((e) => [e.id, e]))
+      const beforeMap = new Map(before.map((e) => [e.id, e]))
+      const toDelete = before.filter((e) => !targetMap.has(e.id)).map((e) => e.id)
+      const toUpsert = target.filter((e) => beforeMap.get(e.id) !== e)
+      if (toDelete.length) await supabase.from('entries').delete().in('id', toDelete)
+      for (let i = 0; i < toUpsert.length; i += 500) {
+        const chunk = toUpsert.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries: target, companies: get().companies })
+    }
+  },
+
+  addReconPoint: async (p) => {
+    const point: ReconPoint = { ...p, id: newId('RC'), kind: 'recon', createdAt: new Date().toISOString() }
+    const reconPoints = [...get().reconPoints, point]
+    set({ reconPoints })
+    if (get().usingSupabase) await supabase.from('rules').insert({ id: point.id, data: point })
+    else saveReconLocal(reconPoints)
+  },
+
+  deleteReconPoint: async (id) => {
+    const reconPoints = get().reconPoints.filter((r) => r.id !== id)
+    set({ reconPoints })
+    if (get().usingSupabase) await supabase.from('rules').delete().eq('id', id)
+    else saveReconLocal(reconPoints)
+  },
+
+  init: async () => {
+    if (hasSupabase) {
+      try {
+        const [accRes, ruleRes, entRes, coRes] = await Promise.all([
+          supabase.from('accounts').select('data').order('code'),
+          supabase.from('rules').select('data'),
+          supabase.from('entries').select('data').order('date'),
+          supabase.from('companies').select('name').order('name'),
+        ])
+        if (!accRes.error && accRes.data) {
+          const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
+          // rules 表為通用 jsonb 儲存：kind==='recon' 者為對帳點，其餘為規則
+          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint)
+          const rules = ruleRows.filter((r): r is Rule => (r as ReconPoint).kind !== 'recon')
+          const reconPoints = ruleRows.filter((r): r is ReconPoint => (r as ReconPoint).kind === 'recon')
+          const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
+          const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, entries, companies })
+          // 舊資料若無流水號，自動補編（一次性）
+          if (entries.some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
+          return
+        }
+      } catch {
+        /* 落到示範模式 */
+      }
+    }
+    const local = loadLocal()
+    set({
+      ready: true,
+      usingSupabase: false,
+      aiConfig: loadAi(),
+      accounts: withPlaceholders(local?.accounts ?? DEFAULT_ACCOUNTS),
+      rules: local?.rules ?? [],
+      reconPoints: loadReconLocal(),
+      entries: local?.entries ?? [],
+      companies: local?.companies ?? [],
+    })
+    // 舊資料若無流水號，自動補編（一次性）
+    if ((local?.entries ?? []).some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
+  },
+
+  preview: (input) => suggest(input, [], get().accounts),
+
+  setAiConfig: (cfg) => {
+    localStorage.setItem(LS_AI, JSON.stringify(cfg))
+    set({ aiConfig: cfg })
+  },
+
+  commit: async (input, chosenAccountCode) => {
+    pushUndo('記一筆')
+    const draft = composeEntry(input, chosenAccountCode, get().accounts)
+    const entry = buildEntry({ ...draft, seq: maxSeq(get().entries) + 1 }) // 驗證借貸平衡 + 流水號
+    const entries = [...get().entries, entry]
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    return entry
+  },
+
+  postJournal: async (j) => {
+    pushUndo('日記帳記帳')
+    const accounts = get().accounts
+    const { source, settled } = sourceFromLegs(j.debitCode, j.creditCode, accounts)
+    const entry = buildEntry({
+      date: j.date,
+      description: j.description,
+      company: j.company,
+      voucherNo: j.voucherNo,
+      note: j.note,
+      source,
+      settled,
+      seq: maxSeq(get().entries) + 1,
+      lines: [
+        { accountCode: j.debitCode, debit: j.amount, credit: 0 },
+        { accountCode: j.creditCode, debit: 0, credit: j.amount },
+      ],
+    })
+    const entries = [...get().entries, entry]
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    return entry
+  },
+
+  updateEntry: async (entry) => {
+    pushUndo('編輯分錄')
+    const entries = get().entries.map((e) => (e.id === entry.id ? entry : e))
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').upsert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  updateEntriesBulk: async (updated) => {
+    pushUndo(`批次更新 ${updated.length} 筆`)
+    const byId = new Map(updated.map((e) => [e.id, e]))
+    const entries = get().entries.map((e) => byId.get(e.id) ?? e)
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').upsert(updated.map((e) => ({ id: e.id, date: e.date, data: e })))
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  deleteEntry: async (id) => {
+    pushUndo('刪除分錄')
+    const entries = get().entries.filter((e) => e.id !== id)
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').delete().eq('id', id)
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  deleteEntriesBulk: async (ids) => {
+    pushUndo(`批次刪除 ${ids.length} 筆`)
+    const idset = new Set(ids)
+    const entries = get().entries.filter((e) => !idset.has(e.id))
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').delete().in('id', ids)
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  addAccount: async (a) => {
+    const accounts = [...get().accounts.filter((x) => x.code !== a.code), a]
+    set({ accounts })
+    if (get().usingSupabase) await supabase.from('accounts').upsert({ code: a.code, data: a })
+    else saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
+  },
+
+  updateAccount: async (oldCode, a) => {
+    const codeChanged = oldCode !== a.code
+    if (codeChanged && get().accounts.some((x) => x.code === a.code)) {
+      throw new Error(`編號 ${a.code} 已被其他科目使用`)
+    }
+    const accounts = get().accounts.map((x) => (x.code === oldCode ? a : x))
+    let entries = get().entries
+    const touched: JournalEntry[] = []
+    let recon = get().reconPoints
+    const touchedRecon: ReconPoint[] = []
+    if (codeChanged) {
+      entries = entries.map((e) => {
+        if (!e.lines.some((l) => l.accountCode === oldCode)) return e
+        const ne = { ...e, lines: e.lines.map((l) => (l.accountCode === oldCode ? { ...l, accountCode: a.code } : l)) }
+        touched.push(ne)
+        return ne
+      })
+      recon = recon.map((p) => {
+        if (p.accountCode !== oldCode) return p
+        const np = { ...p, accountCode: a.code }
+        touchedRecon.push(np)
+        return np
+      })
+    }
+    set({ accounts, entries, reconPoints: recon })
+    if (get().usingSupabase) {
+      if (codeChanged) await supabase.from('accounts').delete().eq('code', oldCode)
+      await supabase.from('accounts').upsert({ code: a.code, data: a })
+      for (let i = 0; i < touched.length; i += 500) {
+        const chunk = touched.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+      if (touchedRecon.length) await supabase.from('rules').upsert(touchedRecon.map((p) => ({ id: p.id, data: p })))
+    } else {
+      saveLocal({ accounts, rules: get().rules, entries, companies: get().companies })
+      if (touchedRecon.length) saveReconLocal(recon)
+    }
+  },
+
+  deleteAccount: async (code) => {
+    const accounts = get().accounts.filter((a) => a.code !== code)
+    set({ accounts })
+    if (get().usingSupabase) await supabase.from('accounts').delete().eq('code', code)
+    else saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
+  },
+
+  addCompany: async (name) => {
+    const n = name.trim()
+    if (!n || get().companies.includes(n)) return
+    const companies = [...get().companies, n].sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+    set({ companies })
+    if (get().usingSupabase) await supabase.from('companies').upsert({ name: n })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries: get().entries, companies })
+  },
+
+  deleteCompany: async (name) => {
+    const companies = get().companies.filter((c) => c !== name)
+    set({ companies })
+    if (get().usingSupabase) await supabase.from('companies').delete().eq('name', name)
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries: get().entries, companies })
+  },
+
+  openItems: () => computeOpenItems(get().entries, get().accounts),
+
+  settle: async (itemId, amount, cashAccountCode, date) => {
+    const item = computeOpenItems(get().entries, get().accounts).find((i) => i.id === itemId)
+    if (!item) throw new Error('找不到未沖項目')
+    pushUndo('沖銷')
+    const base = buildSettlement(item, { date, amount, cashAccountCode })
+    const entry: JournalEntry = { ...base, seq: maxSeq(get().entries) + 1 }
+    const entries = [...get().entries, entry]
+    set({ entries })
+    if (get().usingSupabase) await supabase.from('entries').insert({ id: entry.id, date: entry.date, data: entry })
+    else saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+  },
+
+  splitEntryToAccrual: async (entryId, accrualDate) => {
+    const e = get().entries.find((x) => x.id === entryId)
+    if (!e) throw new Error('找不到分錄')
+    const { accrual, settlement } = splitToAccrual(e, accrualDate, get().accounts)
+    pushUndo('拆為應計')
+    const stamped = { ...accrual, seq: maxSeq(get().entries) + 1 }
+    const entries = get().entries.map((x) => (x.id === entryId ? settlement : x)).concat(stamped)
+    set({ entries })
+    if (get().usingSupabase) {
+      await supabase.from('entries').upsert({ id: settlement.id, date: settlement.date, data: settlement })
+      await supabase.from('entries').insert({ id: stamped.id, date: stamped.date, data: stamped })
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
+  },
+
+  mergeAccrualPair: async (settlementId) => {
+    const s = get().entries.find((x) => x.id === settlementId)
+    if (!s?.settles) throw new Error('此筆非沖銷分錄')
+    const a = get().entries.find((x) => x.id === s.settles)
+    if (!a) throw new Error('找不到對應的應計分錄')
+    const others = get().entries.filter((x) => x.settles === a.id && x.id !== s.id)
+    if (others.length) throw new Error('該應計有多筆沖銷（部分沖銷），不可自動還原')
+    const merged = mergeToCash(s, a, get().accounts)
+    pushUndo('還原為現金')
+    const entries = get().entries.filter((x) => x.id !== a.id).map((x) => (x.id === s.id ? merged : x))
+    set({ entries })
+    if (get().usingSupabase) {
+      await supabase.from('entries').upsert({ id: merged.id, date: merged.date, data: merged })
+      await supabase.from('entries').delete().eq('id', a.id)
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
+  },
+
+  addEntriesBulk: async (newEntries) => {
+    pushUndo(`匯入/新增 ${newEntries.length} 筆`)
+    // 依序補上流水號（接續目前最大值）
+    let n = maxSeq(get().entries)
+    const stamped = newEntries.map((e) => ({ ...e, seq: e.seq ?? ++n }))
+    const entries = [...get().entries, ...stamped]
+    set({ entries })
+    if (get().usingSupabase) {
+      await supabase.from('entries').insert(stamped.map((e) => ({ id: e.id, date: e.date, data: e })))
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
+  },
+
+  addAccountsBulk: async (incoming) => {
+    const byCode = new Map(get().accounts.map((a) => [a.code, a]))
+    for (const a of incoming) byCode.set(a.code, a)
+    const accounts = [...byCode.values()]
+    set({ accounts })
+    if (get().usingSupabase) {
+      await supabase.from('accounts').upsert(incoming.map((a) => ({ code: a.code, data: a })))
+    } else {
+      saveLocal({ accounts, rules: get().rules, entries: get().entries, companies: get().companies })
+    }
+  },
+
+  backfillSeq: async () => {
+    pushUndo('補編流水號')
+    const cur = get().entries
+    // 已有流水號者保留；未編號者依日期、建立時間排序後接續最大值補編
+    const need = cur.filter((e) => typeof e.seq !== 'number')
+    if (!need.length) return 0
+    need.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt ?? '') < (b.createdAt ?? '') ? -1 : 1))
+    let n = maxSeq(cur)
+    const seqById = new Map<string, number>()
+    for (const e of need) seqById.set(e.id, ++n)
+    const entries = cur.map((e) => (seqById.has(e.id) ? { ...e, seq: seqById.get(e.id)! } : e))
+    set({ entries })
+    if (get().usingSupabase) {
+      const updated = entries.filter((e) => seqById.has(e.id))
+      // 分批 upsert，避免單次過大
+      for (let i = 0; i < updated.length; i += 500) {
+        const chunk = updated.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+    } else {
+      saveLocal({ accounts: get().accounts, rules: get().rules, entries, companies: get().companies })
+    }
+    return need.length
+  },
+  }
+})
