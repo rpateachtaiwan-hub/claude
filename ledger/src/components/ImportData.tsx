@@ -55,6 +55,52 @@ function FileBox({ onRows }: { onRows: (rows: string[][], name: string) => void 
   )
 }
 
+// ── 銀行帳號 → 公司／科目 自動建議 ────────────────────────────────────────────
+/** 銀行端公司全名（路特租車有限公司）→ 記帳端簡稱（路特租車） */
+const COMPANY_SUFFIX = /(股份有限公司|有限公司|股份公司|企業社|商行|公司)$/
+
+export function suggestCompany(bankCompanyName: string | null | undefined, companies: string[]): string | null {
+  const raw = (bankCompanyName ?? '').trim()
+  if (!raw || !companies.length) return null
+  const n = raw.replace(COMPANY_SUFFIX, '')
+  if (!n) return null
+  return (
+    companies.find((c) => c === n) ??
+    companies.find((c) => n.startsWith(c) || c.startsWith(n)) ??
+    companies.find((c) => n.includes(c) || c.includes(n)) ??
+    null
+  )
+}
+
+/** 銀行帳號 → 對應的銀行/現金科目。科目名稱帶帳號（或末四碼）者優先，否則取名稱含「銀行」者。 */
+export function suggestCashCode(bankAccountNo: string, options: Account[]): string | null {
+  if (!options.length) return null
+  const acct = (bankAccountNo ?? '').trim()
+  const tail = acct.slice(-4)
+  return (
+    (acct ? options.find((a) => a.name.includes(acct))?.code : undefined) ??
+    (tail.length === 4 ? options.find((a) => a.name.includes(tail))?.code : undefined) ??
+    options.find((a) => /銀行/.test(a.name))?.code ??
+    options[0]?.code ??
+    null
+  )
+}
+
+/** 一批機器人銀行明細的來源資訊 */
+interface BankBatch {
+  ids: number[]
+  label: string
+  acct: string
+  bankCompany: string
+}
+/** 依帳號自動推得的匯入目標，待使用者確認 */
+interface BankSuggestion {
+  acct: string
+  bankCompany: string
+  company: string | null
+  cashCode: string | null
+}
+
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
   const { accounts, companies, entries, addEntriesBulk, addAccountsBulk } = useLedger()
@@ -67,7 +113,9 @@ function ImportTx() {
   const [accrualOn, setAccrualOn] = useState(true)
   const [dedupOn, setDedupOn] = useState(true)
   /** 若本批資料來自機器人銀行明細暫存區，記錄其 id 清單；匯入成功後標記已入帳 */
-  const [bankBatch, setBankBatch] = useState<{ ids: number[]; label: string } | null>(null)
+  const [bankBatch, setBankBatch] = useState<BankBatch | null>(null)
+  /** 依銀行帳號自動帶入的公司／科目，顯示給使用者確認 */
+  const [bankSuggest, setBankSuggest] = useState<BankSuggestion | null>(null)
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const categoryAccounts = accounts.filter((a) => !a.isCash)
 
@@ -82,10 +130,16 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setRawRows(rows) }
 
-  function handleBank(rows: string[][], batch: { ids: number[]; label: string }) {
+  function handleBank(rows: string[][], batch: BankBatch) {
     setDone(null); setCatOverride({}); setBankBatch(batch); setRawRows(rows)
+    // 依帳號自動帶入公司與銀行科目；帶不出來就維持現值，由使用者自己選
+    const co = suggestCompany(batch.bankCompany, companies)
+    const cc = suggestCashCode(batch.acct, cashOptions)
+    if (co) setCompany(co)
+    if (cc) setCashCode(cc)
+    setBankSuggest({ acct: batch.acct, bankCompany: batch.bankCompany, company: co, cashCode: cc })
   }
 
   // 檔案中出現的不重複「類別」值
@@ -125,6 +179,7 @@ function ImportTx() {
         const { error } = await supabase.from('bank_transactions').update({ status: 'matched' }).in('id', bankBatch.ids)
         bankNote = error ? `；⚠ 銀行明細標記失敗（${error.message}），下次載入可能重複出現` : '；銀行明細已標記入帳'
         setBankBatch(null)
+        setBankSuggest(null)
       }
       setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}${bankNote}`)
       setRawRows(null)
@@ -182,7 +237,26 @@ function ImportTx() {
       <FileBox onRows={handle} />
 
       {hasSupabase && <BankFetch onLoad={handleBank} />}
-      {bankBatch && <div className="text-xs text-brand bg-brand-soft border border-brand-light/40 rounded-lg px-3 py-2">目前預覽的是機器人抓回的銀行明細：{bankBatch.label}（{bankBatch.ids.length} 筆）。確認匯入後會自動標記為已入帳。</div>}
+      {bankBatch && bankSuggest && (
+        <div className={`rounded-lg border px-3 py-2.5 space-y-1 ${bankSuggest.company ? 'text-brand bg-brand-soft border-brand-light/40' : 'text-amber-800 bg-amber-50 border-amber-300'}`}>
+          <div className="text-xs">
+            目前預覽的是機器人抓回的銀行明細：<b>{bankBatch.label}</b>（{bankBatch.ids.length} 筆）。確認匯入後會自動標記為已入帳。
+          </div>
+          {bankSuggest.company ? (
+            <div className="text-sm">
+              已依帳號 <b>{bankSuggest.acct}</b>（{bankSuggest.bankCompany}）自動帶入 →
+              公司：<b>{bankSuggest.company}</b>
+              {bankSuggest.cashCode && <> · 銀行科目：<b>{bankSuggest.cashCode} {accName(bankSuggest.cashCode)}</b></>}
+              。<span className="font-medium">請先確認上方兩個欄位無誤再匯入。</span>
+            </div>
+          ) : (
+            <div className="text-sm">
+              ⚠ 帳號 <b>{bankSuggest.acct}</b> 的公司名稱「{bankSuggest.bankCompany}」對不到記帳系統裡的任何公司，
+              <span className="font-medium">請自行在上方選擇正確的公司與銀行科目後再匯入</span>（或到「設定 → 公司」先補上這家公司）。
+            </div>
+          )}
+        </div>
+      )}
 
       {parsed?.error && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{parsed.error}</div>}
 
@@ -510,7 +584,7 @@ interface BankTxRow {
 
 interface BankGroup { acct: string; company: string; rows: BankTxRow[] }
 
-function BankFetch({ onLoad }: { onLoad: (rows: string[][], batch: { ids: number[]; label: string }) => void }) {
+function BankFetch({ onLoad }: { onLoad: (rows: string[][], batch: BankBatch) => void }) {
   const [groups, setGroups] = useState<BankGroup[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -544,7 +618,12 @@ function BankFetch({ onLoad }: { onLoad: (rows: string[][], batch: { ids: number
       r.counterparty_account ?? '',
       r.branch ?? '',
     ])
-    onLoad([header, ...rows], { ids: g.rows.map((r) => r.id), label: `${g.company} ${g.acct}` })
+    onLoad([header, ...rows], {
+      ids: g.rows.map((r) => r.id),
+      label: `${g.company} ${g.acct}`,
+      acct: g.acct,
+      bankCompany: g.rows[0].company_name ?? g.company,
+    })
   }
 
   return (
@@ -567,7 +646,7 @@ function BankFetch({ onLoad }: { onLoad: (rows: string[][], batch: { ids: number
           ))}
         </div>
       )}
-      <p className="text-[11px] text-gray-400">載入後請在上方選好「公司」與對應的「銀行帳戶科目」再確認匯入；匯入成功會自動把這批明細標記為已入帳，之後不會重複出現。</p>
+      <p className="text-[11px] text-gray-400">載入後會依銀行帳號自動帶入建議的「公司」與「銀行帳戶科目」，請確認無誤再匯入；匯入成功會自動把這批明細標記為已入帳，之後不會重複出現。</p>
     </div>
   )
 }
