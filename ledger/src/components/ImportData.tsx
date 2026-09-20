@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useLedger } from '../store/useLedger'
+import { useLedger, selectAllPaged } from '../store/useLedger'
 import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
 import { rowToEntries, planRow, existingDupKeys, consumeDup, isOpeningBalanceRow, type RowInput, type RowPlan } from '../core/importMap'
 import { supabase, hasSupabase } from '../lib/supabase'
@@ -591,13 +591,18 @@ function BankFetch({ onLoad }: { onLoad: (rows: string[][], batch: BankBatch) =>
 
   async function fetchGroups() {
     setBusy(true); setErr(null)
-    const { data, error } = await supabase
-      .from('bank_transactions')
-      .select('id, company_no, company_name, bank_account_no, tx_date, withdrawal, deposit, summary, counterparty_account, memo, branch')
-      .eq('status', 'unmatched')
-      .order('tx_date').order('tx_time')
-      .limit(2000)
-    if (error) { setErr(`讀取失敗：${error.message}`); setBusy(false); return }
+    // 走分頁讀取：PostgREST 有 1000 筆上限，原本的 .limit(2000) 會被靜默截斷
+    const { data, error } = await selectAllPaged<BankTxRow>((f, t, c) =>
+      supabase
+        .from('bank_transactions')
+        .select(
+          'id, company_no, company_name, bank_account_no, tx_date, withdrawal, deposit, summary, counterparty_account, memo, branch',
+          c ? { count: 'exact' } : {},
+        )
+        .eq('status', 'unmatched')
+        .order('tx_date').order('tx_time')
+        .range(f, t))
+    if (error) { setErr(`讀取失敗：${error instanceof Error ? error.message : String(error)}`); setBusy(false); return }
     const by = new Map<string, BankTxRow[]>()
     for (const r of (data ?? []) as BankTxRow[]) {
       const k = r.bank_account_no

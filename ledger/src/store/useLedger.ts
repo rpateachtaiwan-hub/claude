@@ -129,6 +129,47 @@ function saveLocal(s: PersistShape) {
   localStorage.setItem(LS_KEY, JSON.stringify(s))
 }
 
+// ── 分頁讀取：避開 PostgREST 的單次查詢筆數上限 ──────────────────────────────
+// Supabase 的 PostgREST 有 max-rows 設定（本專案為 1000）。不帶 range 的查詢
+// 會被「靜默截斷」——不報錯、不警告，只是少給你資料。2026-09 曾因此讓前端只
+// 載到最舊的 1000 筆分錄，5 月中以後的帳全部從報表消失且無人察覺。
+// 因此所有「要全部資料」的查詢一律走這裡，並用 count 確認真的抓完。
+const PAGE_SIZE = 1000
+/** 安全閥：避免後端異常時無限迴圈（上限 100 萬筆） */
+const MAX_PAGES = 1000
+
+/**
+ * 呼叫端提供的「抓某一頁」函式。務必在裡面用**字面量表名**（`supabase.from('entries')`），
+ * 動態字串會讓 Supabase 的 builder 型別推導失效。
+ * withCount 為 true 時要帶 `{ count: 'exact' }`，本函式靠它判斷何時抓完。
+ */
+export type PageFetcher = (
+  from: number,
+  to: number,
+  withCount: boolean,
+) => PromiseLike<{ data: unknown; error: unknown; count: number | null }>
+
+export async function selectAllPaged<T>(fetchPage: PageFetcher): Promise<{ data: T[] | null; error: unknown }> {
+  const rows: T[] = []
+  let total: number | null = null
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE
+    const { data, error, count } = await fetchPage(from, from + PAGE_SIZE - 1, total === null)
+    if (error) return { data: null, error }
+    if (total === null && typeof count === 'number') total = count
+
+    const batch = (Array.isArray(data) ? data : []) as T[]
+    rows.push(...batch)
+
+    // 抓完的兩個條件：伺服器回空頁，或已達總筆數
+    if (!batch.length) break
+    if (total !== null && rows.length >= total) break
+  }
+
+  return { data: rows, error: null }
+}
+
 export const useLedger = create<LedgerState>()((set, get) => {
   /** 交易異動前呼叫：快照目前 entries 供復原（物件皆不可變，直接存參考即可） */
   const pushUndo = (label: string) => {
@@ -189,10 +230,14 @@ export const useLedger = create<LedgerState>()((set, get) => {
     if (hasSupabase) {
       try {
         const [accRes, ruleRes, entRes, coRes] = await Promise.all([
-          supabase.from('accounts').select('data').order('code'),
-          supabase.from('rules').select('data'),
-          supabase.from('entries').select('data').order('date'),
-          supabase.from('companies').select('name').order('name'),
+          selectAllPaged<{ data: Account }>((f, t, c) =>
+            supabase.from('accounts').select('data', c ? { count: 'exact' } : {}).order('code').range(f, t)),
+          selectAllPaged<{ data: Rule | ReconPoint }>((f, t, c) =>
+            supabase.from('rules').select('data', c ? { count: 'exact' } : {}).range(f, t)),
+          selectAllPaged<{ data: JournalEntry }>((f, t, c) =>
+            supabase.from('entries').select('data', c ? { count: 'exact' } : {}).order('date').range(f, t)),
+          selectAllPaged<{ name: string }>((f, t, c) =>
+            supabase.from('companies').select('name', c ? { count: 'exact' } : {}).order('name').range(f, t)),
         ])
         if (!accRes.error && accRes.data) {
           const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
