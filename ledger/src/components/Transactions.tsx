@@ -136,6 +136,12 @@ export default function Transactions() {
   const pagedRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize)
   React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, aiFilter, companyFilter])
 
+  /** 目前篩選中「尚未 AI 評分」且可分類的筆數（評過的不再重複提供分類） */
+  const aiUnscored = useMemo(
+    () => rows.filter((e) => !e.ai && e.source !== 'settlement' && (catLegOf(e) || e.needsReview)).length,
+    [rows, catLegOf],
+  )
+
   // 借貸平衡檢查（依目前篩選範圍）：總額平衡＋逐筆自身平衡（引擎強制平衡，異常＝資料損壞）
   const balance = useMemo(() => {
     let dr = 0, cr = 0
@@ -224,7 +230,8 @@ export default function Transactions() {
    * 「待分類」且信心 ≥ 門檻者自動補上科目；信心低者維持/標記待確認。
    */
   async function classifyWithAi() {
-    const scope = selected.size ? rows.filter((e) => selected.has(e.id)) : rows
+    // 預設只處理「尚未評分」的；勾選的例外（明確指定＝允許重新評分）
+    const scope = selected.size ? rows.filter((e) => selected.has(e.id)) : rows.filter((e) => !e.ai)
     const targets = scope.filter((e) => e.source !== 'settlement' && (catLegOf(e) || e.needsReview))
     if (!targets.length || !aiConfig.enabled) return
     if (!confirm(`將以 Claude 對 ${targets.length} 筆交易分類並打信心分數（依備註＋歷史分類紀錄判斷）。\n・不會改動你已分類的科目，只加上評分標記\n・「待分類」且信心 ≥${AI_CONFIDENCE_THRESHOLD} 者自動補上科目\n・信心 <${AI_CONFIDENCE_THRESHOLD} 標記請人工檢查\n繼續？`)) return
@@ -337,11 +344,11 @@ export default function Transactions() {
             ⚠ 待分類 {reviewCount}
           </button>
         )}
-        {aiConfig.enabled && (
+        {aiConfig.enabled && (selected.size > 0 || aiUnscored > 0) && (
           <button onClick={classifyWithAi} disabled={!!aiBusy}
-            title={`以 Claude 分類＋信心打分（依備註與歷史紀錄；<${AI_CONFIDENCE_THRESHOLD} 分標人工檢查）`}
+            title={`以 Claude 分類＋信心打分（依備註與歷史紀錄；<${AI_CONFIDENCE_THRESHOLD} 分標人工檢查）。已評分的不會重複處理；勾選特定交易可強制重新評分。`}
             className="px-3 py-2 rounded-lg bg-violet-600 text-white text-sm whitespace-nowrap hover:bg-violet-700 disabled:opacity-60">
-            {aiBusy ?? `🤖 Claude 分類打分${selected.size ? `（選取 ${selected.size}）` : `（篩選 ${rows.length}）`}`}
+            {aiBusy ?? `🤖 Claude 分類打分${selected.size ? `（選取 ${selected.size}，重新評分）` : `（未評分 ${aiUnscored}）`}`}
           </button>
         )}
         {noSeqCount > 0 && (
