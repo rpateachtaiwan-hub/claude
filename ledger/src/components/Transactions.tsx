@@ -3,7 +3,7 @@ import { useLedger } from '../store/useLedger'
 import { composeEntry, sourceFromLegs } from '../core/suggest'
 import { monthEndISO, parsePeriodEx } from '../core/importMap'
 import { buildEntry } from '../core/engine'
-import { classifyWithGemini } from '../core/ai'
+import { classifyRows, AI_CONFIDENCE_THRESHOLD, type AiRowInput } from '../core/aiClassify'
 import { formatTWD } from '../core/money'
 import { downloadCSV, toCSV } from '../lib/csv'
 import AccountCombo from './AccountCombo'
@@ -36,6 +36,7 @@ export default function Transactions() {
   const [asc, setAsc] = useState(false)
   const [onlyReview, setOnlyReview] = useState(false)
   const [reviewedFilter, setReviewedFilter] = useState<'all' | 'un' | 'done'>('all')
+  const [aiFilter, setAiFilter] = useState<'all' | 'low' | 'differ' | 'none'>('all')
   const [companyFilter, setCompanyFilter] = useState('')
   const [editing, setEditing] = useState<JournalEntry | null>(null)
   const [pairFor, setPairFor] = useState<JournalEntry | null>(null)
@@ -73,6 +74,18 @@ export default function Transactions() {
     await updateEntry({ ...e, date })
   }, [updateEntry])
 
+  // AI 輔助：分類腳（非現金/非應收應付）與建議差異判斷
+  const cashSet = useMemo(() => new Set(accounts.filter((a) => a.isCash).map((a) => a.code)), [accounts])
+  const openSet = useMemo(() => new Set(accounts.filter((a) => a.isOpenItem).map((a) => a.code)), [accounts])
+  const catLegOf = React.useCallback(
+    (e: JournalEntry) => e.lines.find((l) => !cashSet.has(l.accountCode) && !openSet.has(l.accountCode)),
+    [cashSet, openSet],
+  )
+  const aiDiffers = React.useCallback(
+    (e: JournalEntry) => !!e.ai && catLegOf(e)?.accountCode !== e.ai.account,
+    [catLegOf],
+  )
+
   // 核對勾記：點一下標「已核對」、再點取消（存入資料庫，跨裝置/中斷後保留進度）
   const toggleReviewed = React.useCallback(async (e: JournalEntry) => {
     await updateEntry({ ...e, reviewedAt: e.reviewedAt ? undefined : new Date().toISOString() })
@@ -95,6 +108,9 @@ export default function Transactions() {
       if (onlyReview && !e.needsReview) return false
       if (reviewedFilter === 'un' && e.reviewedAt) return false
       if (reviewedFilter === 'done' && !e.reviewedAt) return false
+      if (aiFilter === 'low' && !(e.ai && e.ai.confidence < AI_CONFIDENCE_THRESHOLD)) return false
+      if (aiFilter === 'differ' && !aiDiffers(e)) return false
+      if (aiFilter === 'none' && e.ai) return false
       if (companyFilter && e.company !== companyFilter) return false
       if (!kw) return true
       const hay = [e.date, e.description, e.counterparty ?? '', e.company ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', e.note ?? '', accName(debitCodeOf(e)), accName(creditCodeOf(e)), String(amountOf(e))].join(' ').toLowerCase()
@@ -113,12 +129,12 @@ export default function Transactions() {
       }
       return asc ? r : -r
     })
-  }, [entries, q, sortKey, asc, onlyReview, reviewedFilter, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, q, sortKey, asc, onlyReview, reviewedFilter, aiFilter, aiDiffers, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize))
   const safePage = Math.min(page, pageCount - 1)
   const pagedRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize)
-  React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, companyFilter])
+  React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, aiFilter, companyFilter])
 
   // 核對進度（依目前公司篩選範圍計算）
   const progress = useMemo(() => {
@@ -189,24 +205,70 @@ export default function Transactions() {
     await updateEntriesBulk(upd); clearSel()
   }
 
+  /**
+   * Claude 分類＋信心打分（勾選的優先，否則目前篩選結果）。
+   * 原則：不覆寫已分類科目（只寫入 AI 評分與建議供比對）；
+   * 「待分類」且信心 ≥ 門檻者自動補上科目；信心低者維持/標記待確認。
+   */
   async function classifyWithAi() {
-    const todo = entries.filter((e) => e.needsReview)
-    if (!todo.length || !aiConfig.enabled) return
-    let done = 0, ok = 0
-    for (const e of todo) {
-      setAiBusy(`Gemini 分類中… ${done}/${todo.length}`)
-      const input = entryToInput(e, accounts)
-      const r = await classifyWithGemini(input, accounts, aiConfig)
-      if (r) {
-        // Gemini 分類非人工核對：保留原核對狀態，讓使用者仍可用「未核對」篩出來驗證
-        const rebuilt = buildEntry({ ...composeEntry(input, r.accountCode, accounts), id: e.id, seq: e.seq, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false, reviewedAt: e.reviewedAt })
-        await updateEntry(rebuilt)
-        ok++
-      }
-      done++
+    const scope = selected.size ? rows.filter((e) => selected.has(e.id)) : rows
+    const targets = scope.filter((e) => e.source !== 'settlement' && (catLegOf(e) || e.needsReview))
+    if (!targets.length || !aiConfig.enabled) return
+    if (!confirm(`將以 Claude 對 ${targets.length} 筆交易分類並打信心分數（依備註＋歷史分類紀錄判斷）。\n・不會改動你已分類的科目，只加上評分標記\n・「待分類」且信心 ≥${AI_CONFIDENCE_THRESHOLD} 者自動補上科目\n・信心 <${AI_CONFIDENCE_THRESHOLD} 標記請人工檢查\n繼續？`)) return
+    setAiBusy(`Claude 分類中… 0/${targets.length}`)
+    try {
+      const inputs: AiRowInput[] = targets.map((e) => {
+        const dr = e.lines.find((l) => l.debit > 0)!
+        const cur = catLegOf(e)
+        const direction: 'in' | 'out' = cur && e.lines.some((l) => l.accountCode === cur.accountCode && l.credit > 0) ? 'in' : 'out'
+        return {
+          description: e.description, direction, amount: dr.debit, date: e.date, company: e.company,
+          currentAccount: !e.needsReview && cur ? cur.accountCode : undefined,
+        }
+      })
+      // 歷史範例排除本次評測對象，避免拿自己當答案
+      const targetIds = new Set(targets.map((t) => t.id))
+      const history = entries.filter((e) => !targetIds.has(e.id))
+      const verdicts = await classifyRows(inputs, history, accounts, aiConfig,
+        (p) => setAiBusy(`Claude 分類中… ${p.done}/${p.total}`))
+
+      let agree = 0, differ = 0, low = 0, fixed = 0, scored = 0
+      const at = new Date().toISOString()
+      const upd: JournalEntry[] = []
+      targets.forEach((e, i) => {
+        const v = verdicts[i]
+        if (!v) return
+        scored++
+        if (v.confidence < AI_CONFIDENCE_THRESHOLD) low++
+        const meta = { ...v, model: aiConfig.model, at }
+        if (e.needsReview && v.confidence >= AI_CONFIDENCE_THRESHOLD) {
+          const input = entryToInput(e, accounts)
+          upd.push({ ...buildEntry({ ...composeEntry(input, v.account, accounts), id: e.id, seq: e.seq, company: e.company, counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note, needsReview: false, reviewedAt: e.reviewedAt }), ai: meta })
+          fixed++
+        } else {
+          const cur = catLegOf(e)
+          if (cur && !e.needsReview) { if (cur.accountCode === v.account) agree++; else differ++ }
+          upd.push({ ...e, ai: meta })
+        }
+      })
+      if (upd.length) await updateEntriesBulk(upd)
+      clearSel()
+      alert(`Claude 完成 ${scored}/${targets.length} 筆：\n・待分類自動補上科目：${fixed} 筆\n・與現行科目一致：${agree} 筆\n・AI 建議與現行不同：${differ} 筆（列上有紅色 AI≠ 標記，點擊可套用）\n・信心 <${AI_CONFIDENCE_THRESHOLD}：${low} 筆（琥珀色標記，請人工檢查；可用「AI」篩選器找出）`)
+    } catch (err) {
+      alert(`AI 分類失敗：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setAiBusy(null)
     }
-    setAiBusy(null)
-    alert(`Gemini 已分類 ${ok}/${todo.length} 筆${ok < todo.length ? '，其餘仍為待分類（可手動補上）' : ''}`)
+  }
+
+  /** 點 AI 標記：建議與現行不同時可一鍵套用 */
+  async function applyAiSuggestion(e: JournalEntry) {
+    if (!e.ai || e.source === 'settlement') return
+    const cur = catLegOf(e)
+    if (!cur || cur.accountCode === e.ai.account) return
+    if (!confirm(`套用 AI 建議？\n「${accName(cur.accountCode)}」→「${accName(e.ai.account)}」\n理由：${e.ai.reason ?? '—'}（信心 ${e.ai.confidence}）`)) return
+    const side: 'debit' | 'credit' = cur.debit > 0 ? 'debit' : 'credit'
+    await setLeg(e, side, e.ai.account)
   }
 
   return (
@@ -228,6 +290,14 @@ export default function Transactions() {
           <option value="un">☐ 未核對（{progress.total - progress.done}）</option>
           <option value="done">✓ 已核對（{progress.done}）</option>
         </select>
+        <select value={aiFilter} onChange={(e) => setAiFilter(e.target.value as 'all' | 'low' | 'differ' | 'none')}
+          className={`border rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand ${aiFilter !== 'all' ? 'border-violet-400 text-violet-700 bg-violet-50' : 'border-gray-300'}`}
+          title="AI 分類結果篩選">
+          <option value="all">AI：全部</option>
+          <option value="low">AI 信心 &lt;{AI_CONFIDENCE_THRESHOLD}</option>
+          <option value="differ">AI 建議不同</option>
+          <option value="none">未評分</option>
+        </select>
         <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums" title="依目前公司範圍統計">
           進度 {progress.done}/{progress.total}{progress.total > 0 && `（${Math.round((progress.done / progress.total) * 100)}%）`}
         </span>
@@ -237,10 +307,11 @@ export default function Transactions() {
             ⚠ 待分類 {reviewCount}
           </button>
         )}
-        {reviewCount > 0 && aiConfig.enabled && (
+        {aiConfig.enabled && (
           <button onClick={classifyWithAi} disabled={!!aiBusy}
-            className="px-3 py-2 rounded-lg bg-brand text-white text-sm whitespace-nowrap hover:bg-brand-dark disabled:opacity-60">
-            {aiBusy ?? `用 Gemini 分類待分類`}
+            title={`以 Claude 分類＋信心打分（依備註與歷史紀錄；<${AI_CONFIDENCE_THRESHOLD} 分標人工檢查）`}
+            className="px-3 py-2 rounded-lg bg-violet-600 text-white text-sm whitespace-nowrap hover:bg-violet-700 disabled:opacity-60">
+            {aiBusy ?? `🤖 Claude 分類打分${selected.size ? `（選取 ${selected.size}）` : `（篩選 ${rows.length}）`}`}
           </button>
         )}
         {noSeqCount > 0 && (
@@ -332,6 +403,17 @@ export default function Transactions() {
                   {e.source === 'settlement' && (
                     <button onClick={() => setPairFor(e)} title="點擊查看對應的應計分錄"
                       className="ml-1 text-[10px] text-brand bg-brand-soft border border-brand-light/40 rounded px-1 hover:bg-brand-light/20 underline decoration-dotted">沖銷 ↗</button>
+                  )}
+                  {e.ai && (
+                    <button onClick={() => applyAiSuggestion(e)}
+                      title={`AI建議：${accName(e.ai.account)} · ${e.ai.reason ?? ''}（${e.ai.model}）${aiDiffers(e) ? '｜點擊套用建議' : ''}`}
+                      className={`ml-1 text-[10px] rounded px-1 ${aiDiffers(e)
+                        ? 'text-rose-700 bg-rose-50 border border-rose-200 underline decoration-dotted'
+                        : e.ai.confidence < AI_CONFIDENCE_THRESHOLD
+                          ? 'text-amber-800 bg-amber-100 border border-amber-200'
+                          : 'text-green-700 bg-green-50 border border-green-200'}`}>
+                      AI {e.ai.confidence}{aiDiffers(e) ? '≠' : ''}
+                    </button>
                   )}
                   {(e.counterpartyAccount || e.branch) && (
                     <div className="text-[10px] text-gray-400 mt-0.5">

@@ -78,23 +78,24 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Gemini 智慧判斷 */}
+      {/* Claude 智慧分類 */}
       <section>
-        <h2 className="text-sm font-bold text-gray-900 mb-2">智慧分類（Google Gemini）</h2>
+        <h2 className="text-sm font-bold text-gray-900 mb-2">智慧分類（Claude）</h2>
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <p className="text-xs text-gray-500 leading-relaxed">
-            啟用後，「記一筆」與「明細→分類待分類」會用 Gemini 判斷科目。
-            正式版的金鑰由<b>伺服器代理</b>保管（在 Netlify 設定 <code>GEMINI_API_KEY</code>），不會外洩到瀏覽器。
-            下方的金鑰欄為<b>選填</b>，僅供本機開發備援。
+            啟用後，「匯入」與「明細」可用 Claude 依<b>備註內容＋歷史分類紀錄</b>批次判斷科目並打信心分數（0–100），
+            分數低於 <b>80</b> 自動標「待確認」轉人工檢查。
+            金鑰由<b>伺服器代理</b>保管：在 Netlify 環境變數設定 <code>ANTHROPIC_API_KEY</code>（不會外洩到瀏覽器）。
+            下方金鑰欄為<b>選填</b>，僅供本機開發備援。
           </p>
-          <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setSaved(false) }} />啟用 Gemini 智慧分類</label>
-          <L t="模型"><input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false) }} className={inp} placeholder="gemini-2.0-flash" /></L>
-          <L t="Gemini API 金鑰（選填，本機備援）"><input type="password" value={key} onChange={(e) => { setKey(e.target.value); setSaved(false) }} className={inp} placeholder="正式版可留空" /></L>
+          <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setSaved(false) }} />啟用 Claude 智慧分類</label>
+          <L t="模型"><input value={model} onChange={(e) => { setModel(e.target.value); setSaved(false) }} className={inp} placeholder="claude-opus-5" /></L>
+          <L t="Anthropic API 金鑰（選填，本機備援）"><input type="password" value={key} onChange={(e) => { setKey(e.target.value); setSaved(false) }} className={inp} placeholder="正式版可留空（用 Netlify 的 ANTHROPIC_API_KEY）" /></L>
           <div className="flex items-center gap-3">
-            <button onClick={() => { setAiConfig({ enabled, apiKey: key.trim(), model: model.trim() || 'gemini-2.0-flash' }); setSaved(true) }}
+            <button onClick={() => { setAiConfig({ enabled, apiKey: key.trim(), model: model.trim() || 'claude-opus-5' }); setSaved(true) }}
               className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">儲存</button>
             <span className="text-xs text-gray-500">
-              狀態：{aiConfig.enabled ? `✓ 已啟用（${aiConfig.model}）` : '已停用，使用預設分類'}{saved && ' · 已儲存'}
+              狀態：{aiConfig.enabled ? `✓ 已啟用（${aiConfig.model}）` : '已停用，僅用關鍵字規則分類'}{saved && ' · 已儲存'}
             </span>
           </div>
         </div>

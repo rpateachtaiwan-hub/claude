@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_ACCOUNTS } from './accounts'
 import { twoLegEntry } from './engine'
-import { balanceSheet, cashFlow, profitAndLoss } from './reports'
+import { accountDrilldown, balanceSheet, cashFlow, profitAndLoss } from './reports'
 import type { JournalEntry } from './types'
 
 function scenario(): JournalEntry[] {
@@ -57,5 +57,40 @@ describe('現金流量表（直接法）', () => {
     const cf = cashFlow(scenario(), accounts)
     // 營業成本 5101 是賒購、無現金腳 → 不應出現在 operating
     expect(cf.operating.find((l) => l.code === '5101')).toBeUndefined()
+  })
+})
+
+describe('報表下鑽 accountDrilldown', () => {
+  it('收入科目：分錄貢獻＝貸−借，Σ明細必等於損益表數字', () => {
+    const entries = [
+      ...scenario(),
+      twoLegEntry({ date: '2026-02-10', description: '二月現銷', source: 'cash', amount: 80_000, debitCode: '1102', creditCode: '4101' }),
+    ]
+    const items = accountDrilldown(entries, DEFAULT_ACCOUNTS, '4101', { from: '2026-01-01', to: '2026-01-31' })
+    expect(items).toHaveLength(1)
+    expect(items[0].entry.description).toBe('現銷')
+    expect(items[0].amount).toBe(500_000)
+    const pnl = profitAndLoss(entries, DEFAULT_ACCOUNTS, { from: '2026-01-01', to: '2026-01-31' })
+    const row = pnl.rows.find((r) => r.code === '4101')!
+    expect(items.reduce((s, it) => s + it.amount, 0)).toBe(row.amount)
+  })
+
+  it('費用科目：貢獻＝借−貸；期間外與未觸及該科目的分錄不列入', () => {
+    const items = accountDrilldown(scenario(), DEFAULT_ACCOUNTS, '6102', { from: '2026-01-01', to: '2026-01-31' })
+    expect(items).toHaveLength(1)
+    expect(items[0].amount).toBe(50_000)
+    const feb = accountDrilldown(scenario(), DEFAULT_ACCOUNTS, '6102', { from: '2026-02-01', to: '2026-02-28' })
+    expect(feb).toHaveLength(0)
+  })
+
+  it('依日期排序、退款（負貢獻）保留正負號', () => {
+    const entries = [
+      twoLegEntry({ date: '2026-01-20', description: '銷貨', source: 'cash', amount: 900, debitCode: '1102', creditCode: '4101' }),
+      twoLegEntry({ date: '2026-01-05', description: '銷貨退回', source: 'cash', amount: 100, debitCode: '4101', creditCode: '1102' }),
+    ]
+    const items = accountDrilldown(entries, DEFAULT_ACCOUNTS, '4101')
+    expect(items.map((it) => it.entry.description)).toEqual(['銷貨退回', '銷貨'])
+    expect(items.map((it) => it.amount)).toEqual([-100, 900])
+    expect(items.reduce((s, it) => s + it.amount, 0)).toBe(800)
   })
 })

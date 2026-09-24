@@ -55,6 +55,8 @@ export interface JournalEntry {
   needsReview?: boolean
   /** 人工核對完成時間（核對進度追蹤用；未核對為空） */
   reviewedAt?: string
+  /** AI 分類結果（科目建議、0–100 信心分數、理由、模型、時間） */
+  ai?: { account: string; confidence: number; reason?: string; model: string; at: string }
   createdAt?: string
 }
 
