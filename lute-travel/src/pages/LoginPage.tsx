@@ -1,15 +1,18 @@
 import React, { useState } from 'react'
 import { useAuth } from '../auth/useAuth'
+import { hasSupabase } from '../lib/supabase'
 
 export default function LoginPage() {
   const { login, loginError } = useAuth()
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
-    await login(password)
+    if (hasSupabase) await login(email, password)
+    else await login(password)
     setLoading(false)
     setPassword('')
   }
@@ -24,7 +27,21 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="bg-slate-800 rounded-2xl p-6 shadow-xl">
-          <h2 className="text-white font-semibold mb-5">請輸入登入密碼</h2>
+          <h2 className="text-white font-semibold mb-5">{hasSupabase ? '請登入' : '請輸入登入密碼'}</h2>
+
+          {hasSupabase && (
+            <div className="mb-3">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="電子郵件"
+                autoFocus
+                autoComplete="username"
+                className="w-full bg-slate-700 text-white placeholder-slate-400 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
 
           <div className="mb-4">
             <input
@@ -32,7 +49,8 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="密碼"
-              autoFocus
+              autoFocus={!hasSupabase}
+              autoComplete="current-password"
               className="w-full bg-slate-700 text-white placeholder-slate-400 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -43,7 +61,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || !password}
+            disabled={loading || !password || (hasSupabase && !email)}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-3 rounded-lg text-sm transition-colors"
           >
             {loading ? '驗證中…' : '登入'}
@@ -51,7 +69,7 @@ export default function LoginPage() {
         </form>
 
         <p className="text-slate-600 text-[11px] text-center mt-6">
-          資料僅儲存於本機瀏覽器 · 請勿在公用電腦使用
+          {hasSupabase ? '帳號由管理員於 Supabase 建立 · 請勿在公用電腦使用' : '資料僅儲存於本機瀏覽器 · 請勿在公用電腦使用'}
         </p>
       </div>
     </div>
