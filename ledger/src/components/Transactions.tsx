@@ -136,6 +136,19 @@ export default function Transactions() {
   const pagedRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize)
   React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, aiFilter, companyFilter])
 
+  // 借貸平衡檢查（依目前篩選範圍）：總額平衡＋逐筆自身平衡（引擎強制平衡，異常＝資料損壞）
+  const balance = useMemo(() => {
+    let dr = 0, cr = 0
+    const bad: JournalEntry[] = []
+    for (const e of rows) {
+      let d = 0, c = 0
+      for (const l of e.lines) { d += l.debit; c += l.credit }
+      dr += d; cr += c
+      if (d !== c) bad.push(e)
+    }
+    return { dr, cr, diff: dr - cr, bad }
+  }, [rows])
+
   // 核對進度（依目前公司篩選範圍計算）
   const progress = useMemo(() => {
     const scope = companyFilter ? entries.filter((e) => e.company === companyFilter) : entries
@@ -273,6 +286,23 @@ export default function Transactions() {
 
   return (
     <div className="w-full p-4 sm:p-6 space-y-3">
+      <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-sm rounded-lg px-3 py-2 border ${balance.diff === 0 && !balance.bad.length
+        ? 'text-green-800 bg-green-50 border-green-200'
+        : 'text-red-700 bg-red-50 border-red-300 font-medium'}`}>
+        {balance.diff === 0 && !balance.bad.length ? (
+          <span>✓ 借貸平衡</span>
+        ) : (
+          <span>⚠ 借貸不平衡（差額 {formatTWD(Math.abs(balance.diff))}）</span>
+        )}
+        <span className="tabular-nums">借方合計 {formatTWD(balance.dr)}</span>
+        <span className="tabular-nums">貸方合計 {formatTWD(balance.cr)}</span>
+        <span className="text-xs opacity-70">目前篩選 {rows.length} 筆</span>
+        {balance.bad.length > 0 && (
+          <span className="basis-full text-xs">
+            單筆借貸不相等 {balance.bad.length} 筆（資料異常，請回報）：{balance.bad.slice(0, 8).map((e) => fmtSeq(e.seq)).join('、')}{balance.bad.length > 8 ? '…' : ''}
+          </span>
+        )}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋摘要 / 公司 / 科目 / 憑證 / 備註 / 金額…"
           className="flex-1 min-w-[180px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
