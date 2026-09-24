@@ -47,6 +47,34 @@ export function profitAndLoss(entries: JournalEntry[], accounts: Account[], rang
   return { revenue, expense, netIncome: revenue - expense, rows }
 }
 
+// ── 報表下鑽：某科目在期間內的分錄明細 ───────────────────────────────────────
+export interface DrillItem {
+  entry: JournalEntry
+  /** 此分錄對報表數字的貢獻（與報表同號向：收入/負債/權益=貸−借，費用/資產=借−貸） */
+  amount: number
+}
+
+/** 點擊報表數字展開用：列出構成該數字的分錄與各自貢獻，Σamount 必等於報表數字。 */
+export function accountDrilldown(
+  entries: JournalEntry[],
+  accounts: Account[],
+  code: string,
+  range?: DateRange,
+): DrillItem[] {
+  const cat = accounts.find((a) => a.code === code)?.category
+  const sign = cat === 'revenue' || cat === 'liability' || cat === 'equity' ? -1 : 1
+  const out: DrillItem[] = []
+  for (const e of entries) {
+    if (!inRange(e.date, range)) continue
+    let net = 0
+    for (const l of e.lines) if (l.accountCode === code) net += l.debit - l.credit
+    if (net !== 0) out.push({ entry: e, amount: sign * net })
+  }
+  out.sort((a, b) =>
+    a.entry.date < b.entry.date ? -1 : a.entry.date > b.entry.date ? 1 : (a.entry.seq ?? 0) - (b.entry.seq ?? 0))
+  return out
+}
+
 // ── 資產負債表 ────────────────────────────────────────────────────────────────
 export interface BsRow { code: string; name: string; amount: number }
 export interface BalanceSheet {

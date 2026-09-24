@@ -1,12 +1,15 @@
 import React, { useMemo, useState } from 'react'
 import { useLedger } from '../store/useLedger'
-import { balanceSheet, cashFlow, profitAndLoss, type Pnl } from '../core/reports'
+import { accountDrilldown, balanceSheet, cashFlow, profitAndLoss, type DrillItem, type Pnl } from '../core/reports'
 import { formatTWD } from '../core/money'
 import { downloadCSV, toCSV } from '../lib/csv'
 import Recon from './Recon'
 
 type Tab = 'pnl' | 'bs' | 'cf' | 'recon'
 type Gran = 'all' | 'year' | 'month'
+
+/** 下鑽目標：month = 0–11 為矩陣的月欄、-1 為全年欄、undefined 為一般損益表列 */
+type Drill = { code: string; name: string; month?: number }
 
 export default function Reports() {
   const { entries: allEntries, accounts, companies } = useLedger()
@@ -15,6 +18,8 @@ export default function Reports() {
   const [period, setPeriod] = useState('')
   const [zoom, setZoom] = useState(1)
   const [companyFilter, setCompanyFilter] = useState('')
+  const [drill, setDrill] = useState<Drill | null>(null)
+  React.useEffect(() => { setDrill(null) }, [tab, gran, period, companyFilter])
 
   const entries = useMemo(
     () => (companyFilter ? allEntries.filter((e) => e.company === companyFilter) : allEntries),
@@ -49,6 +54,32 @@ export default function Reports() {
       accounts.filter((a) => a.category === cat).map((a) => ({ code: a.code, name: a.name })).sort((a, b) => a.code.localeCompare(b.code))
     return { year: period, mm, per, annual, amt, revAccts: list('revenue'), expAccts: list('expense') }
   }, [tab, gran, period, entries, accounts])
+
+  // 下鑽明細：依點擊目標決定期間（矩陣的某月/全年，或目前檢視的期間）
+  const drillRange = useMemo(() => {
+    if (!drill) return undefined
+    if (matrix && drill.month !== undefined) {
+      if (drill.month === -1) return { from: `${matrix.year}-01-01`, to: `${matrix.year}-12-31` }
+      const m = String(drill.month + 1).padStart(2, '0')
+      return { from: `${matrix.year}-${m}-01`, to: `${matrix.year}-${m}-31` }
+    }
+    return range
+  }, [drill, matrix, range])
+  const drillItems = useMemo(
+    () => (drill ? accountDrilldown(entries, accounts, drill.code, drillRange) : []),
+    [drill, entries, accounts, drillRange],
+  )
+  const drillTitle = drill
+    ? `${drill.code} ${drill.name} · ${matrix && drill.month !== undefined
+        ? (drill.month === -1 ? `${matrix.year} 全年` : `${matrix.year}/${String(drill.month + 1).padStart(2, '0')}`)
+        : label}`
+    : ''
+  const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
+  const toggleDrill = (code: string, name: string, month?: number) =>
+    setDrill((d) => (d && d.code === code && d.month === month ? null : { code, name, month }))
+  const drillPanel = drill
+    ? <DrillPanel code={drill.code} title={drillTitle} items={drillItems} accName={accName} onClose={() => setDrill(null)} />
+    : null
 
   function exportCsv() {
     if (tab === 'pnl' && matrix) {
@@ -131,16 +162,30 @@ export default function Reports() {
 
       {tab !== 'recon' && <div style={{ ['zoom' as keyof React.CSSProperties]: zoom } as React.CSSProperties}>
         {tab === 'pnl' && !matrix && (
-          <Card title="損益表" subtitle={label}>
-            <Section label="收入">{pnl.rows.filter((r) => r.category === 'revenue').map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
+          <Card title="損益表" subtitle={`${label} · 點科目列可展開分錄明細`}>
+            <Section label="收入">{pnl.rows.filter((r) => r.category === 'revenue').map((r, i) => (
+              <React.Fragment key={r.code}>
+                <Row name={r.name} amount={r.amount} zebra={i % 2 === 1}
+                  active={drill?.code === r.code && drill.month === undefined}
+                  onClick={() => toggleDrill(r.code, r.name)} />
+                {drill?.code === r.code && drill.month === undefined && drillPanel}
+              </React.Fragment>
+            ))}</Section>
             <Total name="收入合計" amount={pnl.revenue} />
-            <Section label="費用 / 成本">{pnl.rows.filter((r) => r.category === 'expense').map((r, i) => <Row key={r.code} name={r.name} amount={r.amount} zebra={i % 2 === 1} />)}</Section>
+            <Section label="費用 / 成本">{pnl.rows.filter((r) => r.category === 'expense').map((r, i) => (
+              <React.Fragment key={r.code}>
+                <Row name={r.name} amount={r.amount} zebra={i % 2 === 1}
+                  active={drill?.code === r.code && drill.month === undefined}
+                  onClick={() => toggleDrill(r.code, r.name)} />
+                {drill?.code === r.code && drill.month === undefined && drillPanel}
+              </React.Fragment>
+            ))}</Section>
             <Total name="費用合計" amount={pnl.expense} />
             <Total name="本期淨利" amount={pnl.netIncome} strong highlight />
           </Card>
         )}
 
-        {tab === 'pnl' && matrix && <PnlMatrix mx={matrix} />}
+        {tab === 'pnl' && matrix && <PnlMatrix mx={matrix} drill={drill} onCell={toggleDrill} detail={drillPanel} />}
 
         {tab === 'bs' && (
           <Card title="資產負債表" subtitle={asOf ? `截至 ${asOf}` : '截至目前'}>
@@ -187,18 +232,48 @@ type Mx = {
   expAccts: { code: string; name: string }[]
 }
 
-function PnlMatrix({ mx }: { mx: Mx }) {
+function PnlMatrix({ mx, drill, onCell, detail }: {
+  mx: Mx
+  drill: Drill | null
+  onCell: (code: string, name: string, month: number) => void
+  detail: React.ReactNode
+}) {
   const numCell = (v: number) =>
     v === 0 ? <span className="text-gray-300">0</span> : <span className={v < 0 ? 'text-rose-600' : ''}>{formatTWD(v)}</span>
 
   const td = 'border border-gray-200 px-2 py-1.5 text-right tabular-nums whitespace-nowrap'
+  const clickTd = `${td} cursor-pointer hover:bg-white/80`
+  const activeTd = 'ring-2 ring-brand ring-inset bg-white'
   const nameTd = 'border border-gray-200 px-2 py-1.5 text-left whitespace-nowrap sticky left-0'
   const codeTd = 'border border-gray-200 px-2 py-1.5 text-center text-gray-400'
+  const colSpan = mx.mm.length + 3
+
+  const acctRow = (r: { code: string; name: string }, rowBg: string) => (
+    <React.Fragment key={r.code}>
+      <tr className={`${rowBg} text-gray-700`}>
+        <td className={`${nameTd} ${rowBg.split(' ')[0]}`}>{r.name}</td>
+        <td className={codeTd}>{r.code}</td>
+        {mx.per.map((p, i) => (
+          <td key={i} title="點擊展開此月分錄明細" onClick={() => onCell(r.code, r.name, i)}
+            className={`${clickTd} ${drill?.code === r.code && drill.month === i ? activeTd : ''}`}>
+            {numCell(mx.amt(p, r.code))}
+          </td>
+        ))}
+        <td title="點擊展開全年分錄明細" onClick={() => onCell(r.code, r.name, -1)}
+          className={`${clickTd} font-semibold ${drill?.code === r.code && drill.month === -1 ? activeTd : ''}`}>
+          {numCell(mx.amt(mx.annual, r.code))}
+        </td>
+      </tr>
+      {drill?.code === r.code && (
+        <tr><td colSpan={colSpan} className="border border-gray-200 bg-brand-soft/30 p-2">{detail}</td></tr>
+      )}
+    </React.Fragment>
+  )
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4">
       <h2 className="text-base font-bold text-gray-900 mb-1">損益表 · {mx.year} 年（1~12 月）</h2>
-      <p className="text-xs text-gray-400 mb-3">左右可捲動；右上可放大/縮小</p>
+      <p className="text-xs text-gray-400 mb-3">左右可捲動；右上可放大/縮小；<b>點任一數字</b>可展開該科目該月的分錄明細</p>
       <div className="overflow-x-auto">
         <table className="text-xs border-collapse">
           <thead>
@@ -217,14 +292,7 @@ function PnlMatrix({ mx }: { mx: Mx }) {
               {mx.per.map((p, i) => <td key={i} className={td}>{p.revenue === 0 ? 0 : formatTWD(p.revenue)}</td>)}
               <td className={td}>{formatTWD(mx.annual.revenue)}</td>
             </tr>
-            {mx.revAccts.map((r) => (
-              <tr key={r.code} className="bg-brand-soft text-gray-700">
-                <td className={`${nameTd} bg-brand-soft`}>{r.name}</td>
-                <td className={codeTd}>{r.code}</td>
-                {mx.per.map((p, i) => <td key={i} className={td}>{numCell(mx.amt(p, r.code))}</td>)}
-                <td className={`${td} font-semibold`}>{numCell(mx.amt(mx.annual, r.code))}</td>
-              </tr>
-            ))}
+            {mx.revAccts.map((r) => acctRow(r, 'bg-brand-soft'))}
             {/* 成本 */}
             <tr className="bg-brand text-white font-semibold">
               <td className={`${nameTd} bg-brand`}>成本</td>
@@ -232,14 +300,7 @@ function PnlMatrix({ mx }: { mx: Mx }) {
               {mx.per.map((p, i) => <td key={i} className={td}>{p.expense === 0 ? 0 : formatTWD(p.expense)}</td>)}
               <td className={td}>{formatTWD(mx.annual.expense)}</td>
             </tr>
-            {mx.expAccts.map((r) => (
-              <tr key={r.code} className="bg-amber-50 text-gray-700">
-                <td className={`${nameTd} bg-amber-50`}>{r.name}</td>
-                <td className={codeTd}>{r.code}</td>
-                {mx.per.map((p, i) => <td key={i} className={td}>{numCell(mx.amt(p, r.code))}</td>)}
-                <td className={`${td} font-semibold`}>{numCell(mx.amt(mx.annual, r.code))}</td>
-              </tr>
-            ))}
+            {mx.expAccts.map((r) => acctRow(r, 'bg-amber-50'))}
             {/* 稅前毛利 */}
             <tr className="bg-brand-light/30 font-bold text-gray-900">
               <td className={`${nameTd} bg-brand-light/30`}>稅前毛利</td>
@@ -257,6 +318,65 @@ function PnlMatrix({ mx }: { mx: Mx }) {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+/** 下鑽明細面板：列出構成報表數字的分錄，合計必等於被點擊的數字。 */
+function DrillPanel({ code, title, items, accName, onClose }: {
+  code: string
+  title: string
+  items: DrillItem[]
+  accName: (code: string) => string
+  onClose: () => void
+}) {
+  const total = items.reduce((s, it) => s + it.amount, 0)
+  const fmtSeq = (n?: number) => (typeof n === 'number' ? `#${String(n).padStart(5, '0')}` : '—')
+  return (
+    <div className="bg-white border border-brand-light/60 rounded-lg my-1 shadow-sm text-left" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100">
+        <span className="text-xs font-semibold text-brand-dark">{title} · {items.length} 筆 · 合計 {formatTWD(total)}</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xs whitespace-nowrap">✕ 收合</button>
+      </div>
+      {items.length === 0 ? (
+        <div className="px-3 py-3 text-xs text-gray-400">此期間沒有分錄。</div>
+      ) : (
+        <div className="max-h-72 overflow-y-auto overflow-x-auto">
+          <table className="w-full min-w-[560px] text-xs">
+            <thead><tr className="text-gray-400 bg-gray-50">
+              <th className="px-2 py-1.5 text-left whitespace-nowrap">日期</th>
+              <th className="px-2 py-1.5 text-left">流水號</th>
+              <th className="px-2 py-1.5 text-left">公司</th>
+              <th className="px-2 py-1.5 text-left">摘要</th>
+              <th className="px-2 py-1.5 text-left">對方科目</th>
+              <th className="px-2 py-1.5 text-left">類型</th>
+              <th className="px-2 py-1.5 text-right">金額</th>
+            </tr></thead>
+            <tbody>
+              {items.map(({ entry: e, amount }, i) => {
+                const other = e.lines.find((l) => l.accountCode !== code)
+                return (
+                  <tr key={e.id} className={`border-t border-gray-100 ${i % 2 ? 'bg-gray-50/60' : ''}`}>
+                    <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{e.date}</td>
+                    <td className="px-2 py-1.5 text-gray-400 tabular-nums whitespace-nowrap">{fmtSeq(e.seq)}</td>
+                    <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{e.company ?? '—'}</td>
+                    <td className="px-2 py-1.5 text-gray-700">{e.description}{e.needsReview && <span className="ml-1 text-amber-600">⚠</span>}</td>
+                    <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{other ? accName(other.accountCode) : '—'}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      {e.source === 'accrual'
+                        ? <span className="text-[10px] text-amber-700 bg-amber-50 rounded px-1">應計</span>
+                        : e.source === 'settlement'
+                          ? <span className="text-[10px] text-brand bg-brand-soft rounded px-1">沖銷</span>
+                          : <span className="text-[10px] text-gray-400">現金</span>}
+                    </td>
+                    <td className={`px-2 py-1.5 text-right tabular-nums ${amount < 0 ? 'text-rose-600' : 'text-gray-800'}`}>{formatTWD(amount)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -279,10 +399,11 @@ function Section({ label, children }: { label: string; children: React.ReactNode
     </div>
   )
 }
-function Row({ name, amount, zebra }: { name: string; amount: number; zebra?: boolean }) {
+function Row({ name, amount, zebra, onClick, active }: { name: string; amount: number; zebra?: boolean; onClick?: () => void; active?: boolean }) {
   return (
-    <div className={`flex justify-between text-sm py-2 px-2 -mx-2 rounded ${zebra ? 'bg-brand-soft/50' : ''}`}>
-      <span className="text-gray-700">{name}</span>
+    <div onClick={onClick} title={onClick ? '點擊展開分錄明細' : undefined}
+      className={`flex justify-between text-sm py-2 px-2 -mx-2 rounded ${zebra ? 'bg-brand-soft/50' : ''} ${onClick ? 'cursor-pointer hover:bg-brand-soft' : ''} ${active ? 'bg-brand-soft ring-1 ring-brand-light' : ''}`}>
+      <span className="text-gray-700">{onClick && <span className={`mr-1 text-[10px] ${active ? 'text-brand' : 'text-gray-300'}`}>{active ? '▾' : '▸'}</span>}{name}</span>
       <span className={`tabular-nums ${amount < 0 ? 'text-rose-600' : 'text-gray-800'}`}>{formatTWD(amount)}</span>
     </div>
   )
