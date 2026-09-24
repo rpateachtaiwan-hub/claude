@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useLedger, selectAllPaged } from '../store/useLedger'
 import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
 import { rowToEntries, planRow, existingDupKeys, consumeDup, isOpeningBalanceRow, type RowInput, type RowPlan } from '../core/importMap'
+import { classifyRows, AI_CONFIDENCE_THRESHOLD, type AiRowInput, type AiVerdict } from '../core/aiClassify'
 import { supabase, hasSupabase } from '../lib/supabase'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
@@ -103,7 +104,7 @@ interface BankSuggestion {
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk } = useLedger()
+  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk, aiConfig } = useLedger()
   const [rawRows, setRawRows] = useState<string[][] | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [company, setCompany] = useState('')
@@ -112,6 +113,10 @@ function ImportTx() {
   const [catOverride, setCatOverride] = useState<Record<string, string>>({})
   const [accrualOn, setAccrualOn] = useState(true)
   const [dedupOn, setDedupOn] = useState(true)
+  /** AI 分類結果（與 planRow 處理順序對齊的 verdicts） */
+  const [aiRun, setAiRun] = useState<{ verdicts: (AiVerdict | null)[]; model: string; at: string } | null>(null)
+  const [aiBusy, setAiBusy] = useState<string | null>(null)
+  const [aiErr, setAiErr] = useState<string | null>(null)
   /** 若本批資料來自機器人銀行明細暫存區，記錄其 id 清單；匯入成功後標記已入帳 */
   const [bankBatch, setBankBatch] = useState<BankBatch | null>(null)
   /** 依銀行帳號自動帶入的公司／科目，顯示給使用者確認 */
@@ -130,10 +135,10 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setRawRows(rows) }
 
   function handleBank(rows: string[][], batch: BankBatch) {
-    setDone(null); setCatOverride({}); setBankBatch(batch); setRawRows(rows)
+    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setRawRows(rows)
     // 依帳號自動帶入公司與銀行科目；帶不出來就維持現值，由使用者自己選
     const co = suggestCompany(batch.bankCompany, companies)
     const cc = suggestCashCode(batch.acct, cashOptions)
@@ -158,11 +163,27 @@ function ImportTx() {
           catOverride, accrualOn,
           existingKeys: dedupOn ? existingDupKeys(entries) : undefined,
           company: company || undefined,
+          ai: aiRun,
         })
       : null),
-    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company],
+    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun],
   )
   const needCompany = companies.length > 0 && !company
+
+  async function runAi() {
+    if (!parsed?.aiInputs.length || aiBusy) return
+    setAiErr(null)
+    setAiBusy(`Claude 分類中… 0/${parsed.aiInputs.length}`)
+    try {
+      const verdicts = await classifyRows(parsed.aiInputs, entries, accounts, aiConfig,
+        (pr) => setAiBusy(`Claude 分類中… ${pr.done}/${pr.total}`))
+      setAiRun({ verdicts, model: aiConfig.model, at: new Date().toISOString() })
+    } catch (e) {
+      setAiErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAiBusy(null)
+    }
+  }
 
   async function doImport() {
     if (!parsed?.entries.length || needCompany || !cashCode) return
@@ -305,6 +326,22 @@ function ImportTx() {
 
       {parsed && parsed.rowResults.length > 0 && (
         <>
+          <div className="flex flex-wrap items-center gap-2 bg-white border border-gray-200 rounded-lg p-3">
+            <button onClick={runAi} disabled={!!aiBusy || !aiConfig.enabled}
+              className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
+              {aiBusy ?? '🤖 Claude 分類＋信心打分'}
+            </button>
+            {parsed.aiScored > 0 && (
+              <span className="text-sm text-gray-600">
+                已評分 <b>{parsed.aiScored}</b> 筆 ·
+                <span className={parsed.aiLow ? ' text-amber-700 font-medium' : ' text-green-700'}> 信心 &lt;{AI_CONFIDENCE_THRESHOLD} 共 {parsed.aiLow} 筆（已標待確認）</span>
+              </span>
+            )}
+            {!aiConfig.enabled && <span className="text-xs text-gray-400">（AI 分類已在設定中停用）</span>}
+            {aiErr && <span className="text-xs text-red-600">{aiErr}</span>}
+            <span className="basis-full text-[11px] text-gray-400">Claude 依「備註內容＋歷史分類紀錄＋規則建議」判斷科目並誠實打分；分數低於 {AI_CONFIDENCE_THRESHOLD} 自動列入待確認，由人工複核。</span>
+          </div>
+
           <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} />
           <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} />
           <PreviewSection title={`期初餘額（依設定不入帳，略過 ${parsed.openingCount} 列）`} rows={parsed.rowResults.filter((r) => r.status === 'opening')} accName={accName} max={5} />
@@ -348,6 +385,12 @@ function PreviewSection({ title, rows, accName, max }: { title: string; rows: Ro
                   {r.status === 'dup' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">已存在</span>}
                   {r.status === 'opening' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">期初-不入帳</span>}
                   {r.status === 'cash' && <span className="text-gray-400">現金</span>}
+                  {r.plan.ai && (
+                    <span title={`${r.plan.ai.reason ?? ''}（${r.plan.ai.model}）`}
+                      className={`ml-1 rounded px-1.5 py-0.5 ${r.plan.ai.confidence >= 80 ? 'text-green-700 bg-green-50' : 'text-amber-800 bg-amber-100 font-medium'}`}>
+                      AI {r.plan.ai.confidence}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -384,6 +427,8 @@ interface MapOpts {
   /** 系統既有交易鍵值（次數式重複偵測用）；undefined = 不偵測 */
   existingKeys?: Map<string, number>
   company?: string
+  /** AI 分類結果：verdicts 與「到達 planRow 的列」順序對齊 */
+  ai?: { verdicts: (AiVerdict | null)[]; model: string; at: string } | null
 }
 
 function cleanVoucher(s: string): string | undefined {
@@ -398,6 +443,9 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     rowResults: [] as RowResult[],
     error: null as string | null, totalRows: 0, importableRows: 0,
     skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0, duplicateCount: 0, openingCount: 0,
+    /** 供 AI 分類的輸入（與「到達 planRow 的列」順序對齊） */
+    aiInputs: [] as AiRowInput[],
+    aiScored: 0, aiLow: 0,
     /** 餘額勾稽：檔尾餘額 vs 期初+Σ收入−Σ支出（含被略過的重複列，驗證解析正確性） */
     balance: null as null | { expected: number; computed: number; ok: boolean },
   }
@@ -419,6 +467,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
   }
 
   const opts = { catOverride: mapOpts.catOverride, matchCategory, accrualOn: mapOpts.accrualOn }
+  let aiIdx = 0 // 與 mapOpts.ai.verdicts 對齊的序號（每個到達 planRow 的列 +1）
   const remaining = mapOpts.existingKeys ? new Map(mapOpts.existingKeys) : null
   let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
   let runningNet = 0
@@ -464,14 +513,25 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
 
     const rowInput: RowInput = { date, amount, direction, description: desc, catText: catText || undefined, counterpartyAccount, branch, voucherNo }
     try {
-      const plan = planRow(rowInput, cashCode, accounts, opts)
+      const verdict = mapOpts.ai?.verdicts[aiIdx] ?? null
+      aiIdx++
+      const rowOpts = verdict && mapOpts.ai
+        ? { ...opts, ai: { ...verdict, model: mapOpts.ai.model, at: mapOpts.ai.at } }
+        : opts
+      const plan = planRow(rowInput, cashCode, accounts, rowOpts)
+      // 供 AI 分類的輸入：規則建議取自未套用 AI 時的判斷
+      result.aiInputs.push({
+        description: desc, direction, amount, date, company: mapOpts.company,
+        ruleSuggestion: verdict ? undefined : (plan.review ? undefined : plan.account),
+      })
+      if (verdict) { result.aiScored++; if (verdict.confidence < AI_CONFIDENCE_THRESHOLD) result.aiLow++ }
       // 重複偵測：系統已有同（公司+日期+金額+摘要）者，按剩餘次數略過
       if (remaining && consumeDup(remaining, date, amount, desc, mapOpts.company)) {
         result.duplicateCount++
         result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup' })
         continue
       }
-      const entries = rowToEntries(rowInput, cashCode, accounts, opts)
+      const entries = rowToEntries(rowInput, cashCode, accounts, rowOpts)
       result.entries.push(...entries)
       const status: RowStatus = plan.accrual ? 'accrual' : plan.review ? 'review' : 'cash'
       result.rowResults.push({ date, desc, amount, direction, plan, status })

@@ -11,6 +11,7 @@
 
 import { buildEntry } from './engine'
 import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
+import { AI_CONFIDENCE_THRESHOLD, type AiMeta } from './aiClassify'
 import type { Account, JournalEntry } from './types'
 
 /** 名稱正規化（去空白/符號），科目名稱比對用。 */
@@ -263,7 +264,7 @@ export interface ClassifyOpts {
 export interface Classified {
   account: string
   review: boolean
-  source: 'keyword' | 'category' | 'fallback'
+  source: 'keyword' | 'category' | 'fallback' | 'ai'
 }
 
 /**
@@ -318,6 +319,8 @@ export function classifyRow(row: RowInput, accounts: Account[], opts: ClassifyOp
 export interface BuildOpts extends ClassifyOpts {
   /** 全域是否啟用跨期自動拆應計（預設 true） */
   accrualOn?: boolean
+  /** AI 分類結果：存在且科目有效時優先於關鍵字/類別；信心低於門檻自動標待確認 */
+  ai?: AiMeta | null
   /** 應付控制科目（費用/成本應計用），預設 2101 */
   apAccount?: string
   /** 應收控制科目（收入應計用），預設 1141 */
@@ -327,7 +330,9 @@ export interface BuildOpts extends ClassifyOpts {
 function resolvePlan(row: RowInput, accounts: Account[], opts: BuildOpts) {
   const accrualOn = opts.accrualOn !== false
   const codes = new Set(accounts.map((a) => a.code))
-  const cls = classifyRow(row, accounts, opts)
+  const cls: Classified = opts.ai && codes.has(opts.ai.account)
+    ? { account: opts.ai.account, review: opts.ai.confidence < AI_CONFIDENCE_THRESHOLD, source: 'ai' }
+    : classifyRow(row, accounts, opts)
   const [payY, payM] = row.date.split('-').map(Number)
   const period = parsePeriodEx(row.description, payY, payM)
   const isRange = period?.kind === 'range'
@@ -364,13 +369,13 @@ export function rowToEntries(
     const accrualDate = monthEndISO(period.year, period.month)
     if (row.direction === 'in') {
       // 收入應計：借 應收 / 貸 收入；收款沖銷：借 銀行 / 貸 應收
-      const accrual = buildEntry({
+      const accrual: JournalEntry = { ...(opts.ai ? { ai: opts.ai } : {}), ...buildEntry({
         ...common, date: accrualDate, description: row.description, source: 'accrual', settled: false,
         lines: [
           { accountCode: control, debit: amount, credit: 0 },
           { accountCode: cls.account, debit: 0, credit: amount },
         ],
-      })
+      }) }
       const settlement = buildEntry({
         company: row.company, date: row.date, description: `收款沖銷：${row.description}`, source: 'settlement', settles: accrual.id,
         lines: [
@@ -381,13 +386,13 @@ export function rowToEntries(
       return [accrual, settlement]
     } else {
       // 費用/成本應計：借 費用 / 貸 應付；付款沖銷：借 應付 / 貸 銀行
-      const accrual = buildEntry({
+      const accrual: JournalEntry = { ...(opts.ai ? { ai: opts.ai } : {}), ...buildEntry({
         ...common, date: accrualDate, description: row.description, source: 'accrual', settled: false,
         lines: [
           { accountCode: cls.account, debit: amount, credit: 0 },
           { accountCode: control, debit: 0, credit: amount },
         ],
-      })
+      }) }
       const settlement = buildEntry({
         company: row.company, date: row.date, description: `付款沖銷：${row.description}`, source: 'settlement', settles: accrual.id,
         lines: [
@@ -403,7 +408,7 @@ export function rowToEntries(
   const lines = row.direction === 'in'
     ? [{ accountCode: bankCode, debit: amount, credit: 0 }, { accountCode: cls.account, debit: 0, credit: amount }]
     : [{ accountCode: cls.account, debit: amount, credit: 0 }, { accountCode: bankCode, debit: 0, credit: amount }]
-  const entry = buildEntry({ ...common, date: row.date, description: row.description, source: 'cash', settled: true, needsReview: review, lines })
+  const entry: JournalEntry = { ...buildEntry({ ...common, date: row.date, description: row.description, source: 'cash', settled: true, needsReview: review, lines }), ...(opts.ai ? { ai: opts.ai } : {}) }
   return [entry]
 }
 
@@ -415,6 +420,9 @@ export interface RowPlan {
   review: boolean
   accrual: boolean
   accrualDate?: string
+  /** AI 分類結果（含信心分數），無 AI 時為 undefined */
+  ai?: AiMeta
+  source?: Classified['source']
 }
 
 export function planRow(row: RowInput, bankCode: string, accounts: Account[], opts: BuildOpts = {}): RowPlan {
@@ -425,6 +433,8 @@ export function planRow(row: RowInput, bankCode: string, accounts: Account[], op
     debitCode, creditCode, account: cls.account, review,
     accrual: canAccrue,
     accrualDate: canAccrue && period?.kind === 'month' ? monthEndISO(period.year, period.month) : undefined,
+    ai: opts.ai ?? undefined,
+    source: cls.source,
   }
 }
 

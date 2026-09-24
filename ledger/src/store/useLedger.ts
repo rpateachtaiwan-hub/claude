@@ -16,7 +16,7 @@ import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../cor
 
 const LS_KEY = 'qing-ledger-v1'
 const LS_AI = 'qing-ledger-ai'
-const DEFAULT_AI: AiConfig = { enabled: true, model: 'gemini-2.0-flash', apiKey: '' }
+const DEFAULT_AI: AiConfig = { enabled: true, model: 'claude-opus-5', apiKey: '' }
 
 interface PersistShape {
   accounts: Account[]
@@ -92,7 +92,10 @@ function maxSeq(entries: JournalEntry[]): number {
 function loadAi(): AiConfig {
   try {
     const raw = localStorage.getItem(LS_AI)
-    return raw ? { ...DEFAULT_AI, ...JSON.parse(raw) } : DEFAULT_AI
+    const cfg = raw ? { ...DEFAULT_AI, ...JSON.parse(raw) } : DEFAULT_AI
+    // 由 Gemini 移轉：舊設定的模型/金鑰不適用於 Claude，改回預設
+    if (cfg.model.startsWith('gemini')) return { ...cfg, model: DEFAULT_AI.model, apiKey: '' }
+    return cfg
   } catch {
     return DEFAULT_AI
   }
