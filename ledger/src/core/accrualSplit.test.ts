@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
 import { USER_CODE_ACCOUNTS } from './testFixtures'
 import { rowToEntries, type RowInput } from './importMap'
-import { splitToAccrual, mergeToCash } from './accrualSplit'
+import { splitToAccrual, mergeToCash, replaceAccountInEntries } from './accrualSplit'
 import { openItems } from './settle'
 
 const A = [...UNIFIED_PRESET_ACCOUNTS, ...USER_CODE_ACCOUNTS]
@@ -90,5 +90,31 @@ describe('事後拆為應計', () => {
     const s1 = splitToAccrual(e1, '2026-05-31', A)
     const s2 = splitToAccrual(e2, '2026-05-31', A)
     expect(() => mergeToCash(s1.settlement, s2.accrual, A)).toThrow()
+  })
+})
+
+describe('配對腳同步修改 replaceAccountInEntries', () => {
+  it('應計＋沖銷的控制科目一起換：借貸仍平衡、settles 連結保留', () => {
+    const e = rowToEntries({ date: '2026-06-09', description: 'X服務費', direction: 'out', amount: 700, company: '菸酒' } as RowInput, '1102', A, { accrualOn: false })[0]
+    const { accrual, settlement } = splitToAccrual(e, '2026-05-31', A)
+    const [a2, s2] = replaceAccountInEntries([accrual, settlement], '2101', '1150') // 應付帳款 → 暫付/代墊款
+    expect(a2.lines.find((l) => l.credit > 0)!.accountCode).toBe('1150')
+    expect(s2.lines.find((l) => l.debit > 0)!.accountCode).toBe('1150')
+    expect(s2.settles).toBe(a2.id)
+    for (const x of [a2, s2]) {
+      const dr = x.lines.reduce((t, l) => t + l.debit, 0)
+      const cr = x.lines.reduce((t, l) => t + l.credit, 0)
+      expect(dr).toBe(cr)
+    }
+    // 換成非「需沖銷」科目後，該組退出沖銷清單
+    expect(openItems([a2, s2], A)).toHaveLength(0)
+  })
+
+  it('換成另一個「需沖銷」科目時，沖銷配對數學不變（已全沖＝不出現於清單）', () => {
+    const e = rowToEntries({ date: '2026-06-09', description: 'Y服務費', direction: 'out', amount: 900, company: '菸酒' } as RowInput, '1102', A, { accrualOn: false })[0]
+    const { accrual, settlement } = splitToAccrual(e, '2026-05-31', A)
+    const chart = A.map((x) => (x.code === '2150' ? { ...x, isOpenItem: true } : x))
+    const pair = replaceAccountInEntries([accrual, settlement], '2101', '2150')
+    expect(openItems(pair, chart)).toHaveLength(0)
   })
 })

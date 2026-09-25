@@ -4,6 +4,7 @@ import { composeEntry, sourceFromLegs } from '../core/suggest'
 import { monthEndISO, parsePeriodEx } from '../core/importMap'
 import { buildEntry } from '../core/engine'
 import { classifyRows, AI_CONFIDENCE_THRESHOLD, type AiRowInput } from '../core/aiClassify'
+import { replaceAccountInEntries } from '../core/accrualSplit'
 import { formatTWD } from '../core/money'
 import { downloadCSV, toCSV } from '../lib/csv'
 import AccountCombo from './AccountCombo'
@@ -60,13 +61,21 @@ export default function Transactions() {
     const amount = dr.debit
     const debitCode = side === 'debit' ? code : dr.accountCode
     const creditCode = side === 'credit' ? code : cr.accountCode
-    // 沖銷分錄：配對腳（應收/應付）不可改，非配對腳可改且保留配對連結
+    // 應計/沖銷的「配對腳」（應收/應付控制科目）：改它＝同步修改整組
+    // （應計是現金流水反推的，配對科目本身也可能推錯，所以開放但保持兩側一致）
+    const target = side === 'debit' ? dr : cr
+    const targetIsControl = !!accounts.find((a) => a.code === target.accountCode)?.isOpenItem
+    if (targetIsControl && (e.source === 'accrual' || (e.source === 'settlement' && e.settles))) {
+      const accrualId = e.source === 'accrual' ? e.id : e.settles!
+      const group = entries.filter((x) => x.id === accrualId || x.settles === accrualId)
+      if (group.length < 2 && e.source === 'settlement') { alert('找不到對應的應計分錄（孤兒沖銷），請於編輯視窗處理。'); return }
+      const accNameOf = (c: string) => accounts.find((a) => a.code === c)?.name ?? c
+      if (!confirm(`「${accNameOf(target.accountCode)}」是應計↔沖銷的配對科目。\n將同步把整組 ${group.length} 張分錄（應計＋沖銷）的此科目一併改為「${accNameOf(code)}」，保持配對與借貸一致。繼續？`)) return
+      await updateEntriesBulk(replaceAccountInEntries(group, target.accountCode, code))
+      return
+    }
+    // 沖銷分錄的非配對腳（銀行/現金側）：直接改，保留配對連結
     if (e.source === 'settlement' && e.settles) {
-      const target = side === 'debit' ? dr : cr
-      if (accounts.find((a) => a.code === target.accountCode)?.isOpenItem) {
-        alert('這一腳是沖銷配對科目（應收/應付），直接修改會破壞與應計分錄的配對。\n若整筆交易要重新分類，請開啟編輯視窗（✎）用「還原為單筆現金分錄」後再修改。')
-        return
-      }
       await updateEntry({ ...buildEntry({
         date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
         counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note,
@@ -84,7 +93,7 @@ export default function Transactions() {
       reviewedAt: e.reviewedAt ?? new Date().toISOString(), // 人工改科目視同已核對
       lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
     }))
-  }, [accounts, updateEntry])
+  }, [accounts, entries, updateEntry, updateEntriesBulk])
 
   const setEntryDate = React.useCallback(async (e: JournalEntry, date: string) => {
     await updateEntry({ ...e, date })
@@ -621,15 +630,7 @@ const LegCell = React.memo(function LegCell(
   const name = acc?.name ?? line.accountCode
   const chip = CAT_CHIP[acc?.category ?? ''] ?? 'bg-gray-100 text-gray-600'
 
-  if (e.source === 'settlement' && acc?.isOpenItem) {
-    // 沖銷的配對腳（應收/應付）鎖定：改它會破壞與應計的配對
-    return (
-      <div title="沖銷配對科目不可直接修改；要重新分類請在編輯視窗（✎）先「還原為單筆現金分錄」">
-        <div className={`rounded px-1.5 py-0.5 text-[13px] leading-tight text-center ${chip} opacity-80`}>🔒 {name}</div>
-        <div className="tabular-nums text-gray-500 text-sm text-right mt-0.5">{formatTWD(amount)}</div>
-      </div>
-    )
-  }
+
 
   if (edit) {
     return (

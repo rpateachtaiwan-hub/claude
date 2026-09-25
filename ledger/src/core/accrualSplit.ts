@@ -96,3 +96,15 @@ export function mergeToCash(
       : [{ accountCode: catLeg.accountCode, debit: amount, credit: 0 }, { accountCode: bankLeg.accountCode, debit: 0, credit: amount }],
   })
 }
+
+/**
+ * 把一組分錄中的某科目整批替換（金額與借貸方向不變）。
+ * 用於「配對腳同步修改」：應計＋其所有沖銷的控制科目一起換，
+ * 換成非「需沖銷」科目時，該組自然退出沖銷清單（餘額仍正確）。
+ */
+export function replaceAccountInEntries(entries: JournalEntry[], oldCode: string, newCode: string): JournalEntry[] {
+  return entries.map((e) => ({
+    ...e,
+    lines: e.lines.map((l) => (l.accountCode === oldCode ? { ...l, accountCode: newCode } : l)),
+  }))
+}
