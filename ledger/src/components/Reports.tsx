@@ -331,7 +331,8 @@ function DrillPanel({ code, title, items, accName, onClose }: {
   onClose: () => void
 }) {
   const total = items.reduce((s, it) => s + it.amount, 0)
-  const fmtSeq = (n?: number) => (typeof n === 'number' ? `#${String(n).padStart(5, '0')}` : '—')
+  // 與明細頁 fmtSeq 同格式（7 位數），流水號兩邊一致可互查
+  const fmtSeq = (n?: number) => (typeof n === 'number' ? `#${String(n).padStart(7, '0')}` : '—')
   return (
     <div className="bg-white border border-brand-light/60 rounded-lg my-1 shadow-sm text-left" onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-100">

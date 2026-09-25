@@ -113,7 +113,7 @@ export default function Transactions() {
       if (aiFilter === 'none' && e.ai) return false
       if (companyFilter && e.company !== companyFilter) return false
       if (!kw) return true
-      const hay = [e.date, e.description, e.counterparty ?? '', e.company ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', e.note ?? '', accName(debitCodeOf(e)), accName(creditCodeOf(e)), String(amountOf(e))].join(' ').toLowerCase()
+      const hay = [e.date, e.description, e.counterparty ?? '', e.company ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', e.note ?? '', accName(debitCodeOf(e)), accName(creditCodeOf(e)), String(amountOf(e)), e.seq != null ? String(e.seq) : '', fmtSeq(e.seq)].join(' ').toLowerCase()
       return hay.includes(kw)
     })
     return [...filtered].sort((a, b) => {
@@ -311,7 +311,7 @@ export default function Transactions() {
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋摘要 / 公司 / 科目 / 憑證 / 備註 / 金額…"
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋流水號 / 摘要 / 公司 / 科目 / 憑證 / 備註 / 金額…"
           className="flex-1 min-w-[180px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
         {companies.length > 0 && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}
