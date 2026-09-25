@@ -60,6 +60,22 @@ export default function Transactions() {
     const amount = dr.debit
     const debitCode = side === 'debit' ? code : dr.accountCode
     const creditCode = side === 'credit' ? code : cr.accountCode
+    // 沖銷分錄：配對腳（應收/應付）不可改，非配對腳可改且保留配對連結
+    if (e.source === 'settlement' && e.settles) {
+      const target = side === 'debit' ? dr : cr
+      if (accounts.find((a) => a.code === target.accountCode)?.isOpenItem) {
+        alert('這一腳是沖銷配對科目（應收/應付），直接修改會破壞與應計分錄的配對。\n若整筆交易要重新分類，請開啟編輯視窗（✎）用「還原為單筆現金分錄」後再修改。')
+        return
+      }
+      await updateEntry({ ...buildEntry({
+        date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
+        counterpartyAccount: e.counterpartyAccount, branch: e.branch, voucherNo: e.voucherNo, note: e.note,
+        source: 'settlement', settles: e.settles, id: e.id, seq: e.seq, needsReview: false,
+        reviewedAt: e.reviewedAt ?? new Date().toISOString(),
+        lines: [{ accountCode: debitCode, debit: amount, credit: 0 }, { accountCode: creditCode, debit: 0, credit: amount }],
+      }) })
+      return
+    }
     const { source, settled } = sourceFromLegs(debitCode, creditCode, accounts)
     await updateEntry(buildEntry({
       date: e.date, description: e.description, counterparty: e.counterparty, company: e.company,
@@ -605,10 +621,11 @@ const LegCell = React.memo(function LegCell(
   const name = acc?.name ?? line.accountCode
   const chip = CAT_CHIP[acc?.category ?? ''] ?? 'bg-gray-100 text-gray-600'
 
-  if (e.source === 'settlement') {
+  if (e.source === 'settlement' && acc?.isOpenItem) {
+    // 沖銷的配對腳（應收/應付）鎖定：改它會破壞與應計的配對
     return (
-      <div>
-        <div className={`rounded px-1.5 py-0.5 text-[13px] leading-tight text-center ${chip} opacity-80`}>{name}</div>
+      <div title="沖銷配對科目不可直接修改；要重新分類請在編輯視窗（✎）先「還原為單筆現金分錄」">
+        <div className={`rounded px-1.5 py-0.5 text-[13px] leading-tight text-center ${chip} opacity-80`}>🔒 {name}</div>
         <div className="tabular-nums text-gray-500 text-sm text-right mt-0.5">{formatTWD(amount)}</div>
       </div>
     )
