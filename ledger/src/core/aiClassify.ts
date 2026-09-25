@@ -125,11 +125,11 @@ export function buildClassifySystem(accounts: Account[]): string {
 ${list}
 
 判斷規則：
-1. 收到錢（in）通常配收入/負債類；付出錢（out）通常配費用成本/資產/負債類。現金或銀行科目與應收應付控制科目不可作為分類結果。
+1. 收到錢（in）通常配收入/負債類；付出錢（out）通常配費用成本/資產/負債類。現金或銀行科目不可作為分類結果（本方銀行腳由系統自帶）。
 2. 「歷史分類範例」是人工確認過的正確答案，摘要相似時比照辦理，權重最高。
 3. 「規則建議」是關鍵字系統的初判，通常可靠，但你可依內容推翻。
 4. 信心分數要誠實：摘要含糊（如「網銀轉帳」「待確認來源」）、金額異常、或範例互相矛盾時給低分。80 分以上代表你認為不需人工複核。
-5. 股東往來/借款/週轉金屬公司間資金調度，不是收入費用。
+5. 股東往來/借款/週轉金/關係企業借還款屬公司間資金調度，不是收入費用：收回借出款記應收往來科目（如 應收帳款-關係企業）、向關係企業借入或償還記對應負債往來科目。
 
 輸出：只回傳 JSON 陣列，不要其他文字，格式：
 [{"i":<列編號>,"account":"<科目編號>","confidence":<0-100整數>,"reason":"<15字內中文理由>"}]
@@ -153,7 +153,8 @@ export function buildClassifyUser(rows: AiRowInput[], examples: HistoryExample[]
 export function parseClassifyResponse(text: string, rowCount: number, accounts: Account[]): (AiVerdict | null)[] {
   const out: (AiVerdict | null)[] = Array.from({ length: rowCount }, () => null)
   const codes = new Set(accounts.map((a) => a.code))
-  const banned = new Set(accounts.filter((a) => a.isCash || a.isOpenItem).map((a) => a.code))
+  // 只擋現金/銀行科目；應收/應付等往來科目開放（關係企業資金調度屬正常分類，直接入帳即借貸互抵）
+  const banned = new Set(accounts.filter((a) => a.isCash).map((a) => a.code))
   const cleaned = text.replace(/```json|```/g, '').trim()
   const start = cleaned.indexOf('[')
   const end = cleaned.lastIndexOf(']')

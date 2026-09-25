@@ -48,19 +48,31 @@ describe('AI 分類：prompt 與解析', () => {
     expect(user).toContain('月結-12月車資')
   })
 
-  it('解析：含 code fence、對齊列編號、無效科目與現金科目剔除、信心夾限', () => {
+  it('解析：含 code fence、對齊列編號、無效/現金科目剔除、往來科目開放、信心夾限', () => {
     const text = '```json\n[' +
       '{"i":0,"account":"6101","confidence":95,"reason":"薪資"},' +
       '{"i":1,"account":"9999","confidence":90},' + // 不存在 → null
       '{"i":2,"account":"1102","confidence":88},' + // 現金科目 → null
       '{"i":3,"account":"6199","confidence":150},' + // 夾限到 100
+      '{"i":4,"account":"1141","confidence":85,"reason":"關係企業還款"},' + // 應收(需沖銷)科目 → 開放直接入帳
       '{"i":9,"account":"6101","confidence":80}' + // 超出範圍 → 忽略
       ']\n```'
-    const out = parseClassifyResponse(text, 4, A)
+    const out = parseClassifyResponse(text, 5, A)
     expect(out[0]).toEqual({ account: '6101', confidence: 95, reason: '薪資' })
     expect(out[1]).toBeNull()
     expect(out[2]).toBeNull()
     expect(out[3]?.confidence).toBe(100)
+    expect(out[4]).toEqual({ account: '1141', confidence: 85, reason: '關係企業還款' })
+  })
+
+  it('往來科目經 AI 入帳＝單純現金分錄（借銀行/貸應收），不產生應計掛帳', () => {
+    const r: RowInput = { date: '2026-08-20', amount: 100000, direction: 'in', description: '網銀轉帳 關係企業借款', company: '租車' }
+    const entries = rowToEntries(r, '1112', A, { ai: { account: '1141', confidence: 88, model: 'claude-opus-5', at: 'x' } })
+    expect(entries).toHaveLength(1)
+    expect(entries[0].source).toBe('cash')
+    expect(entries[0].lines.find((l) => l.accountCode === '1112')!.debit).toBe(100000)
+    expect(entries[0].lines.find((l) => l.accountCode === '1141')!.credit).toBe(100000)
+    expect(entries[0].needsReview).toBeFalsy()
   })
 
   it('解析：非 JSON 回傳全 null，不拋錯', () => {
