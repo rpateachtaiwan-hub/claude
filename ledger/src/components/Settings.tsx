@@ -3,6 +3,7 @@ import { useLedger } from '../store/useLedger'
 import { useAuth } from '../auth/useAuth'
 import { hasSupabase } from '../lib/supabase'
 import { adminUsersCall, type ManagedUser } from '../lib/adminApi'
+import AuditTrail from './AuditTrail'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
 import { findSimilarAccounts, ruleTargetIssues, structuralIssues } from '../core/accountAudit'
@@ -56,6 +57,13 @@ export default function Settings() {
   return (
     <div className="w-full p-4 sm:p-6 space-y-6">
       {hasSupabase && <UserSecurity />}
+
+      {hasSupabase && (
+        <section>
+          <h2 className="text-sm font-bold text-gray-900 mb-2">操作軌跡（稽核）</h2>
+          <AuditTrail />
+        </section>
+      )}
 
       {/* 公司 */}
       <section>
