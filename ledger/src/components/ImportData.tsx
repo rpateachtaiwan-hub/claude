@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useLedger, selectAllPaged } from '../store/useLedger'
-import { PLACEHOLDER_ACCOUNTS } from '../core/accounts'
+import { missingPlaceholders } from '../core/accounts'
 import { rowToEntries, planRow, existingDupKeys, consumeDup, isOpeningBalanceRow, type RowInput, type RowPlan } from '../core/importMap'
 import { classifyRows, AI_CONFIDENCE_THRESHOLD, type AiRowInput, type AiVerdict } from '../core/aiClassify'
 import { supabase, hasSupabase } from '../lib/supabase'
@@ -189,7 +189,7 @@ function ImportTx() {
     if (!parsed?.entries.length || needCompany || !cashCode) return
     setBusy(true)
     try {
-      await addAccountsBulk(PLACEHOLDER_ACCOUNTS) // 確保「收入(未分類)/其他成本」存在
+      await addAccountsBulk(missingPlaceholders(accounts)) // 確保待確認科目存在（同名者不重複建）
       const entries = parsed.entries.map((e) => ({ ...e, company: company || undefined }))
       await addEntriesBulk(entries)
       const review = entries.filter((e) => e.needsReview).length

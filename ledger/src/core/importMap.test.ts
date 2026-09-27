@@ -88,6 +88,18 @@ describe('關鍵字配科目', () => {
   })
 })
 
+describe('待確認科目認名稱（使用者自訂編號）', () => {
+  it('fallback 使用同名科目的自訂編號（400 待確認(收入)），而非寫死 4999', () => {
+    const chart = [
+      ...UNIFIED_PRESET_ACCOUNTS.filter((a) => a.code !== '4999'),
+      { code: '400', name: '待確認(收入)', category: 'revenue' as const, normalBalance: 'credit' as const },
+    ]
+    const c = classifyRow(row({ description: '???', direction: 'in' }), chart)
+    expect(c.account).toBe('400')
+    expect(c.review).toBe(true)
+  })
+})
+
 describe('期別代碼', () => {
   it('2604 → 26年4月', () => {
     expect(parsePeriodCode('2604健保費')).toEqual({ year: 2026, month: 4 })
