@@ -5,7 +5,7 @@
 
 import { create } from 'zustand'
 import { supabase, hasSupabase } from '../lib/supabase'
-import { DEFAULT_ACCOUNTS, PLACEHOLDER_ACCOUNTS } from '../core/accounts'
+import { DEFAULT_ACCOUNTS, missingPlaceholders } from '../core/accounts'
 import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
 import { mergeToCash, splitToAccrual } from '../core/accrualSplit'
@@ -64,6 +64,8 @@ interface LedgerState extends PersistShape {
   addAccount: (a: Account) => Promise<void>
   /** 編輯科目（含改編號：自動把引用舊編號的分錄與對帳點改到新編號） */
   updateAccount: (oldCode: string, a: Account) => Promise<void>
+  /** 科目合併：把 fromCode 的所有分錄/對帳點改掛到 toCode，並刪除 fromCode 科目 */
+  mergeAccounts: (fromCode: string, toCode: string) => Promise<void>
   deleteAccount: (code: string) => Promise<void>
   addCompany: (name: string) => Promise<void>
   deleteCompany: (name: string) => Promise<void>
@@ -103,8 +105,7 @@ function loadAi(): AiConfig {
 
 /** 確保「待確認」等預設科目一定在清單中（避免顯示成代號） */
 function withPlaceholders(accs: Account[]): Account[] {
-  const codes = new Set(accs.map((a) => a.code))
-  return [...accs, ...PLACEHOLDER_ACCOUNTS.filter((p) => !codes.has(p.code))]
+  return [...accs, ...missingPlaceholders(accs)]
 }
 
 const LS_RECON = 'qing-ledger-recon'
@@ -386,6 +387,39 @@ export const useLedger = create<LedgerState>()((set, get) => {
     if (get().usingSupabase) {
       if (codeChanged) await supabase.from('accounts').delete().eq('code', oldCode)
       await supabase.from('accounts').upsert({ code: a.code, data: a })
+      for (let i = 0; i < touched.length; i += 500) {
+        const chunk = touched.slice(i, i + 500)
+        await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))
+      }
+      if (touchedRecon.length) await supabase.from('rules').upsert(touchedRecon.map((p) => ({ id: p.id, data: p })))
+    } else {
+      saveLocal({ accounts, rules: get().rules, entries, companies: get().companies })
+      if (touchedRecon.length) saveReconLocal(recon)
+    }
+  },
+
+  mergeAccounts: async (fromCode, toCode) => {
+    if (fromCode === toCode) return
+    if (!get().accounts.some((x) => x.code === toCode)) throw new Error(`目標科目 ${toCode} 不存在`)
+    pushUndo(`科目合併 ${fromCode}→${toCode}`)
+    const touched: JournalEntry[] = []
+    const entries = get().entries.map((e) => {
+      if (!e.lines.some((l) => l.accountCode === fromCode)) return e
+      const ne = { ...e, lines: e.lines.map((l) => (l.accountCode === fromCode ? { ...l, accountCode: toCode } : l)) }
+      touched.push(ne)
+      return ne
+    })
+    const touchedRecon: ReconPoint[] = []
+    const recon = get().reconPoints.map((p) => {
+      if (p.accountCode !== fromCode) return p
+      const np = { ...p, accountCode: toCode }
+      touchedRecon.push(np)
+      return np
+    })
+    const accounts = get().accounts.filter((x) => x.code !== fromCode)
+    set({ accounts, entries, reconPoints: recon })
+    if (get().usingSupabase) {
+      await supabase.from('accounts').delete().eq('code', fromCode)
       for (let i = 0; i < touched.length; i += 500) {
         const chunk = touched.slice(i, i + 500)
         await supabase.from('entries').upsert(chunk.map((e) => ({ id: e.id, date: e.date, data: e })))

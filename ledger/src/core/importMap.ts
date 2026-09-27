@@ -10,7 +10,7 @@
 // =============================================================================
 
 import { buildEntry } from './engine'
-import { UNIFIED_PRESET_ACCOUNTS } from './accounts'
+import { UNIFIED_PRESET_ACCOUNTS, unclassifiedCode } from './accounts'
 import { AI_CONFIDENCE_THRESHOLD, type AiMeta } from './aiClassify'
 import type { Account, JournalEntry } from './types'
 
@@ -303,7 +303,7 @@ export function classifyRow(row: RowInput, accounts: Account[], opts: ClassifyOp
     if (auto && codes.has(auto)) { account = auto; source = 'category' }
   }
   if (!account) {
-    account = row.direction === 'in' ? '4999' : '6999'
+    account = unclassifiedCode(row.direction, accounts)
     review = true; source = 'fallback'
   }
 

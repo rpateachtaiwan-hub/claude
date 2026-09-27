@@ -115,7 +115,7 @@ export function buildHistoryExamples(
 export function buildClassifySystem(accounts: Account[]): string {
   const catZh: Record<string, string> = { asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用/成本' }
   const list = accounts
-    .filter((a) => a.code !== '4999' && a.code !== '6999')
+    .filter((a) => !a.name.includes('待確認')) // 待確認佔位科目（不論編號）不是有效分類目標
     .map((a) => `${a.code}｜${a.name}｜${catZh[a.category] ?? a.category}${a.isCash ? '｜現金/銀行' : ''}${a.isOpenItem ? '｜應收應付控制' : ''}`)
     .join('\n')
   return `你是台灣中小企業集團（旅行社、租車、菸酒零售、國際貿易電商、娛樂門市）的資深記帳士。

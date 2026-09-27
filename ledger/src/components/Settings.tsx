@@ -12,12 +12,19 @@ const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
 const catZh: Record<Category, string> = { asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用' }
 
 export default function Settings() {
-  const { accounts, entries, addAccount, updateAccount, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
+  const { accounts, entries, addAccount, updateAccount, mergeAccounts, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
 
   async function saveAccount(a: Account) {
     if (!editing) { await addAccount(a); return }
     if (editing.code !== a.code) {
+      const target = accounts.find((x) => x.code === a.code)
       const refs = entries.filter((e) => e.lines.some((l) => l.accountCode === editing.code)).length
+      if (target) {
+        // 目標編號已存在 → 提供「合併」：交易整批改掛過去、本科目刪除
+        if (!confirm(`編號 ${a.code} 已存在（${target.name}）。\n要把「${editing.code} ${editing.name}」併入它嗎？\n・${refs} 筆交易與相關對帳點將改掛到 ${a.code} ${target.name}\n・科目 ${editing.code} 將被刪除（保留 ${target.name} 的名稱與設定）`)) return
+        await mergeAccounts(editing.code, a.code)
+        return
+      }
       const msg = refs > 0
         ? `編號 ${editing.code} → ${a.code}：將同步更新 ${refs} 筆交易與相關對帳點的科目編號。確定？`
         : `編號 ${editing.code} → ${a.code}：目前沒有交易引用此科目，直接改編號。確定？`

@@ -38,6 +38,22 @@ export const UNCLASSIFIED_IN = '4999'
 export const UNCLASSIFIED_OUT = '6999'
 export const PLACEHOLDER_ACCOUNTS: Account[] = DEFAULT_ACCOUNTS.filter((a) => a.code === '4999' || a.code === '6999')
 
+const normName = (s: string) => s.replace(/[\s/／\-‐（）()]/g, '')
+
+/** 尚缺的待確認佔位科目：編號或「同名稱」已存在皆視為已有（使用者自建的 400 待確認(收入) 不會再被 4999 重複注入）。 */
+export function missingPlaceholders(accs: Account[]): Account[] {
+  const codes = new Set(accs.map((a) => a.code))
+  const names = new Set(accs.map((a) => normName(a.name)))
+  return PLACEHOLDER_ACCOUNTS.filter((p) => !codes.has(p.code) && !names.has(normName(p.name)))
+}
+
+/** 待確認科目的實際編號：先認名稱（使用者可自訂編號），找不到才退回 4999/6999。 */
+export function unclassifiedCode(direction: 'in' | 'out', accs: Account[]): string {
+  const want = normName(direction === 'in' ? '待確認(收入)' : '待確認(支出)')
+  const hit = accs.find((a) => normName(a.name) === want)
+  return hit?.code ?? (direction === 'in' ? '4999' : '6999')
+}
+
 export const DEFAULT_CASH_ACCOUNT = '1102' // 銀行存款
 export const AR_ACCOUNT = '1141'
 export const AP_ACCOUNT = '2101'
