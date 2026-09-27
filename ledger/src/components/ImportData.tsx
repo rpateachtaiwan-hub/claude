@@ -117,6 +117,8 @@ function ImportTx() {
   const [aiRun, setAiRun] = useState<{ verdicts: (AiVerdict | null)[]; model: string; at: string } | null>(null)
   const [aiBusy, setAiBusy] = useState<string | null>(null)
   const [aiErr, setAiErr] = useState<string | null>(null)
+  /** 期初餘額判定的人工覆寫（openingIdx → 改為匯入） */
+  const [openingOverride, setOpeningOverride] = useState<Record<number, boolean>>({})
   /** 若本批資料來自機器人銀行明細暫存區，記錄其 id 清單；匯入成功後標記已入帳 */
   const [bankBatch, setBankBatch] = useState<BankBatch | null>(null)
   /** 依銀行帳號自動帶入的公司／科目，顯示給使用者確認 */
@@ -135,10 +137,10 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setOpeningOverride({}); setRawRows(rows) }
 
   function handleBank(rows: string[][], batch: BankBatch) {
-    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setRawRows(rows)
+    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setOpeningOverride({}); setRawRows(rows)
     // 依帳號自動帶入公司與銀行科目；帶不出來就維持現值，由使用者自己選
     const co = suggestCompany(batch.bankCompany, companies)
     const cc = suggestCashCode(batch.acct, cashOptions)
@@ -164,11 +166,33 @@ function ImportTx() {
           existingKeys: dedupOn ? existingDupKeys(entries) : undefined,
           company: company || undefined,
           ai: aiRun,
+          openingOverride,
         })
       : null),
-    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun],
+    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun, openingOverride],
   )
   const needCompany = companies.length > 0 && !company
+
+  /** 期初餘額判定的人工切換鈕：opening 列顯示「改為匯入」，被改過的列顯示「還原不入帳」 */
+  const openingAction = (r: RowResult): React.ReactNode => {
+    if (r.openingIdx === undefined) return null
+    return r.status === 'opening' ? (
+      <button onClick={() => toggleOpening(r.openingIdx!)} title="自動判定可能不準：把這一列當一般交易匯入（會進分類流程）"
+        className="ml-1 rounded px-1.5 py-0.5 text-brand border border-brand-light/60 bg-white hover:bg-brand-soft underline decoration-dotted">
+        ⤴ 改為匯入
+      </button>
+    ) : (
+      <button onClick={() => toggleOpening(r.openingIdx!)} title="此列原判定為期初餘額，已人工改為匯入；點擊還原為不入帳"
+        className="ml-1 rounded px-1.5 py-0.5 text-amber-700 border border-amber-300 bg-amber-50 hover:bg-amber-100 underline decoration-dotted">
+        ↩ 原期初·還原不入帳
+      </button>
+    )
+  }
+
+  function toggleOpening(oi: number) {
+    setOpeningOverride((p) => ({ ...p, [oi]: !p[oi] }))
+    if (aiRun) setAiRun(null) // 列的增減會改變 AI 結果的對齊，需重新評分
+  }
 
   async function runAi() {
     if (!parsed?.aiInputs.length || aiBusy) return
@@ -342,11 +366,11 @@ function ImportTx() {
             <span className="basis-full text-[11px] text-gray-400">Claude 依「備註內容＋歷史分類紀錄＋規則建議」判斷科目並誠實打分；分數低於 {AI_CONFIDENCE_THRESHOLD} 自動列入待確認，由人工複核。</span>
           </div>
 
-          <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} />
-          <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} />
-          <PreviewSection title={`期初餘額（依設定不入帳，略過 ${parsed.openingCount} 列）`} rows={parsed.rowResults.filter((r) => r.status === 'opening')} accName={accName} max={5} />
-          <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} />
-          <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} />
+          <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} action={openingAction} />
+          <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} action={openingAction} />
+          <PreviewSection title={`期初餘額（判定含「餘額」字樣，預設不入帳，略過 ${parsed.openingCount} 列${parsed.openingImported ? `；已人工改為匯入 ${parsed.openingImported} 列` : ''}）`} rows={parsed.rowResults.filter((r) => r.status === 'opening')} accName={accName} max={20} action={openingAction} />
+          <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} action={openingAction} />
+          <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} action={openingAction} />
           <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
             {busy ? '匯入中…' : `確認匯入 ${parsed.importableRows} 筆交易${company ? `到「${company}」` : ''}`}
           </button>
@@ -358,7 +382,7 @@ function ImportTx() {
   )
 }
 
-function PreviewSection({ title, rows, accName, max }: { title: string; rows: RowResult[]; accName: (c: string) => string; max: number }) {
+function PreviewSection({ title, rows, accName, max, action }: { title: string; rows: RowResult[]; accName: (c: string) => string; max: number; action?: (r: RowResult) => React.ReactNode }) {
   if (!rows.length) return null
   const shown = rows.slice(0, max)
   return (
@@ -391,6 +415,7 @@ function PreviewSection({ title, rows, accName, max }: { title: string; rows: Ro
                       AI {r.plan.ai.confidence}
                     </span>
                   )}
+                  {action?.(r)}
                 </td>
               </tr>
             ))}
@@ -419,7 +444,7 @@ function matchCategory(catText: string, accounts: Account[]): string | null {
 }
 
 type RowStatus = 'cash' | 'accrual' | 'review' | 'dup' | 'opening'
-interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus }
+interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus; openingIdx?: number }
 
 interface MapOpts {
   catOverride?: Record<string, string>
@@ -429,6 +454,8 @@ interface MapOpts {
   company?: string
   /** AI 分類結果：verdicts 與「到達 planRow 的列」順序對齊 */
   ai?: { verdicts: (AiVerdict | null)[]; model: string; at: string } | null
+  /** 期初餘額列人工覆寫：openingIdx → true 表示「改為匯入」（自動判定可能不準） */
+  openingOverride?: Record<number, boolean>
 }
 
 function cleanVoucher(s: string): string | undefined {
@@ -445,7 +472,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0, duplicateCount: 0, openingCount: 0,
     /** 供 AI 分類的輸入（與「到達 planRow 的列」順序對齊） */
     aiInputs: [] as AiRowInput[],
-    aiScored: 0, aiLow: 0,
+    aiScored: 0, aiLow: 0, openingImported: 0,
     /** 餘額勾稽：檔尾餘額 vs 期初+Σ收入−Σ支出（含被略過的重複列，驗證解析正確性） */
     balance: null as null | { expected: number; computed: number; ok: boolean },
   }
@@ -468,6 +495,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
 
   const opts = { catOverride: mapOpts.catOverride, matchCategory, accrualOn: mapOpts.accrualOn }
   let aiIdx = 0 // 與 mapOpts.ai.verdicts 對齊的序號（每個到達 planRow 的列 +1）
+  let openingIdx = 0 // 期初餘額判定列的序號（人工覆寫用鍵值）
   const remaining = mapOpts.existingKeys ? new Map(mapOpts.existingKeys) : null
   let lastDate = '' // 日期常只在每日第一列出現，空白時沿用上一筆
   let runningNet = 0
@@ -504,11 +532,17 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     const voucher = cVoucher >= 0 ? cleanVoucher(row[cVoucher]) : undefined
     const voucherNo = direction === 'in' ? invNo || voucher : voucher || invNo
 
-    // 期初餘額列不入帳（仍計入上方 runningNet，檔內勾稽才會相符）
+    // 期初餘額列預設不入帳（仍計入上方 runningNet，檔內勾稽才會相符）；可人工逐列改為匯入
+    let rowOpeningIdx: number | undefined
     if (isOpeningBalanceRow(desc)) {
-      result.openingCount++
-      result.rowResults.push({ date, desc, amount, direction, plan: { debitCode: '', creditCode: '', account: '', review: false, accrual: false }, status: 'opening' })
-      continue
+      rowOpeningIdx = openingIdx++
+      if (!mapOpts.openingOverride?.[rowOpeningIdx]) {
+        result.openingCount++
+        result.rowResults.push({ date, desc, amount, direction, plan: { debitCode: '', creditCode: '', account: '', review: false, accrual: false }, status: 'opening', openingIdx: rowOpeningIdx })
+        continue
+      }
+      result.openingImported++
+      // 落下去走正常分類流程（通常會進待確認，由人工指定科目）
     }
 
     const rowInput: RowInput = { date, amount, direction, description: desc, catText: catText || undefined, counterpartyAccount, branch, voucherNo }
@@ -528,13 +562,13 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
       // 重複偵測：系統已有同（公司+日期+金額+摘要）者，按剩餘次數略過
       if (remaining && consumeDup(remaining, date, amount, desc, mapOpts.company)) {
         result.duplicateCount++
-        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup' })
+        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup', openingIdx: rowOpeningIdx })
         continue
       }
       const entries = rowToEntries(rowInput, cashCode, accounts, rowOpts)
       result.entries.push(...entries)
       const status: RowStatus = plan.accrual ? 'accrual' : plan.review ? 'review' : 'cash'
-      result.rowResults.push({ date, desc, amount, direction, plan, status })
+      result.rowResults.push({ date, desc, amount, direction, plan, status, openingIdx: rowOpeningIdx })
       result.importableRows++
       if (plan.accrual) result.accrualCount++
       if (plan.review) result.needsReviewCount++
