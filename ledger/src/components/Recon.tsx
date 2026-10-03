@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useLedger } from '../store/useLedger'
 import { bankBalanceAsOf, monthlyBankBalances } from '../core/recon'
+import { bankingDayGaps, cashTxDates } from '../core/gapCheck'
 import { formatTWD } from '../core/money'
 
 /**
@@ -115,6 +116,8 @@ export default function Recon() {
         </div>
       )}
 
+      <GapCheck />
+
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <div className="px-4 pt-3 text-sm font-medium text-gray-700">對帳紀錄</div>
         <table className="w-full min-w-[680px] text-sm">
@@ -154,3 +157,75 @@ function L({ t, children }: { t: string; children: React.ReactNode }) {
   return <div><label className="block text-xs text-gray-500 mb-1">{t}</label>{children}</div>
 }
 const inp = 'w-full border border-gray-300 rounded px-2.5 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand'
+
+/** 交易日缺口檢查：以銀行營業日（週一～五，扣除台灣國定假日）找出連續無交易的區間。 */
+function GapCheck() {
+  const { entries, accounts, companies } = useLedger()
+  const [co, setCo] = useState('')
+  const [minGap, setMinGap] = useState(3)
+  const today = new Date().toISOString().slice(0, 10)
+
+  const result = useMemo(() => {
+    const dates = cashTxDates(entries, accounts, co || undefined)
+    if (!dates.size) return null
+    const sorted = [...dates].sort()
+    const first = sorted[0]
+    const last = sorted[sorted.length - 1]
+    const gaps = bankingDayGaps(dates, first, today, minGap)
+    const tail = gaps.length && gaps[gaps.length - 1].to >= last ? gaps[gaps.length - 1] : null
+    return { first, last, gaps: tail ? gaps.slice(0, -1) : gaps, tail, txDays: dates.size }
+  }, [entries, accounts, co, minGap, today])
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-sm font-medium text-gray-700">交易日缺口檢查</div>
+        <select value={co} onChange={(e) => setCo(e.target.value)} className="border border-gray-300 rounded px-2 py-1.5 text-sm">
+          <option value="">全部公司（合併）</option>
+          {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={minGap} onChange={(e) => setMinGap(Number(e.target.value))} className="border border-gray-300 rounded px-2 py-1.5 text-sm" title="連續多少個營業日無交易才視為缺口">
+          <option value={1}>缺口門檻：≥1 營業日</option>
+          <option value={3}>缺口門檻：≥3 營業日</option>
+          <option value={5}>缺口門檻：≥5 營業日</option>
+          <option value={10}>缺口門檻：≥10 營業日</option>
+        </select>
+      </div>
+      <p className="text-[11px] text-gray-400">以「銀行營業日」為基準（週一～五，已扣除 2026 台灣國定假日；春節/連假不會誤報）。只統計有銀行腳的交易，應計分錄不列入。缺口可能代表「來源資料沒匯到」，也可能該公司當時真的無交易——請對照原始檔判斷。</p>
+      {!result ? (
+        <p className="text-xs text-gray-400">此範圍尚無銀行交易資料。</p>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <div className="text-gray-600">
+            資料範圍 <b>{result.first}</b> ～ <b>{result.last}</b> · 有交易 {result.txDays} 天
+          </div>
+          {result.tail && (
+            <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              ⚠ <b>尾端缺口</b>：{result.tail.from} 起至今（{result.tail.days} 個營業日）沒有任何資料——最可能是還沒匯入/機器人未回補。
+            </div>
+          )}
+          {result.gaps.length === 0 ? (
+            <div className="text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">✓ 資料範圍內沒有 ≥{minGap} 個營業日的中段缺口。</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[380px] text-sm">
+                <thead><tr className="bg-gray-50 text-gray-500 text-xs">
+                  <th className="px-3 py-2 text-left">缺口起</th><th className="px-3 py-2 text-left">缺口迄</th><th className="px-3 py-2 text-right">營業日數</th>
+                </tr></thead>
+                <tbody>
+                  {result.gaps.map((g) => (
+                    <tr key={g.from} className="border-t border-gray-100">
+                      <td className="px-3 py-1.5 text-gray-700">{g.from}</td>
+                      <td className="px-3 py-1.5 text-gray-700">{g.to}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-amber-700 font-medium">{g.days}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
