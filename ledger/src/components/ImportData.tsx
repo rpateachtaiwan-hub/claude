@@ -104,7 +104,7 @@ interface BankSuggestion {
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk, aiConfig } = useLedger()
+  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk, aiConfig, addAiUsage } = useLedger()
   const [rawRows, setRawRows] = useState<string[][] | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [company, setCompany] = useState('')
@@ -199,9 +199,10 @@ function ImportTx() {
     setAiErr(null)
     setAiBusy(`Claude 分類中… 0/${parsed.aiInputs.length}`)
     try {
-      const verdicts = await classifyRows(parsed.aiInputs, entries, accounts, aiConfig,
+      const { verdicts, usage } = await classifyRows(parsed.aiInputs, entries, accounts, aiConfig,
         (pr) => setAiBusy(`Claude 分類中… ${pr.done}/${pr.total}`))
       setAiRun({ verdicts, model: aiConfig.model, at: new Date().toISOString() })
+      await addAiUsage(usage)
     } catch (e) {
       setAiErr(e instanceof Error ? e.message : String(e))
     } finally {
