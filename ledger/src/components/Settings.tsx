@@ -3,6 +3,7 @@ import { useLedger } from '../store/useLedger'
 import { useAuth } from '../auth/useAuth'
 import { hasSupabase } from '../lib/supabase'
 import { adminUsersCall, type ManagedUser } from '../lib/adminApi'
+import { estimateCostUsd } from '../core/aiClassify'
 import AuditTrail from './AuditTrail'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
@@ -13,7 +14,7 @@ const CATS: Category[] = ['asset', 'liability', 'equity', 'revenue', 'expense']
 const catZh: Record<Category, string> = { asset: '資產', liability: '負債', equity: '權益', revenue: '收入', expense: '費用' }
 
 export default function Settings() {
-  const { accounts, entries, addAccount, updateAccount, mergeAccounts, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany } = useLedger()
+  const { accounts, entries, addAccount, updateAccount, mergeAccounts, addAccountsBulk, deleteAccount, aiConfig, setAiConfig, companies, addCompany, deleteCompany, aiUsage } = useLedger()
 
   async function saveAccount(a: Account) {
     if (!editing) { await addAccount(a); return }
@@ -112,6 +113,18 @@ export default function Settings() {
             <span className="text-xs text-gray-500">
               狀態：{aiConfig.enabled ? `✓ 已啟用（${aiConfig.model}）` : '已停用，僅用關鍵字規則分類'}{saved && ' · 已儲存'}
             </span>
+          </div>
+          <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2.5 leading-relaxed">
+            {aiUsage ? (
+              <>
+                <b>累計用量</b>：呼叫 {aiUsage.calls} 次 · 輸入 {aiUsage.inputTokens.toLocaleString()} / 輸出 {aiUsage.outputTokens.toLocaleString()} tokens ·
+                估算費用 <b>US${estimateCostUsd(aiUsage, aiConfig.model).toFixed(2)}</b>
+                <span className="text-gray-400">（依 {aiConfig.model} 牌價估算；統計自 {aiUsage.updatedAt.slice(0, 10)} 功能上線後）</span>
+              </>
+            ) : (
+              <><b>累計用量</b>：尚無紀錄（下次執行 AI 分類後開始統計）</>
+            )}
+            <span className="block text-gray-400 mt-0.5">剩餘儲值額度請至 <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noreferrer" className="text-brand underline">Anthropic Console → Billing</a> 查看（官方未提供以 API 金鑰查餘額）。</span>
           </div>
         </div>
       </section>

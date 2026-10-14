@@ -30,7 +30,7 @@ function entryToInput(e: JournalEntry, accounts: Account[]): QuickInput {
 }
 
 export default function Transactions() {
-  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies, backfillSeq, undoStack, undo } = useLedger()
+  const { entries, accounts, deleteEntry, updateEntry, deleteEntriesBulk, updateEntriesBulk, aiConfig, companies, backfillSeq, undoStack, undo, addAiUsage } = useLedger()
   const accName = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
@@ -274,8 +274,9 @@ export default function Transactions() {
       // 歷史範例排除本次評測對象，避免拿自己當答案
       const targetIds = new Set(targets.map((t) => t.id))
       const history = entries.filter((e) => !targetIds.has(e.id))
-      const verdicts = await classifyRows(inputs, history, accounts, aiConfig,
+      const { verdicts, usage } = await classifyRows(inputs, history, accounts, aiConfig,
         (p) => setAiBusy(`Claude 分類中… ${p.done}/${p.total}`))
+      await addAiUsage(usage)
 
       let agree = 0, differ = 0, low = 0, fixed = 0, scored = 0
       const at = new Date().toISOString()

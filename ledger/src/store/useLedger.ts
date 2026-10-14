@@ -10,6 +10,7 @@ import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
 import { mergeToCash, splitToAccrual } from '../core/accrualSplit'
 import type { ReconPoint } from '../core/recon'
+import type { AiUsage } from '../core/aiClassify'
 import { buildEntry, newId } from '../core/engine'
 import type { AiConfig } from '../core/ai'
 import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
@@ -45,6 +46,10 @@ interface LedgerState extends PersistShape {
   undoStack: { label: string; entries: JournalEntry[] }[]
   /** 復原上一步交易異動 */
   undo: () => Promise<void>
+  /** Claude API 累計用量（估算費用用；雲端存 rules 表） */
+  aiUsage: (AiUsage & { updatedAt: string }) | null
+  /** 累加一次分類執行的用量 */
+  addAiUsage: (delta: AiUsage) => Promise<void>
   /** 銀行對帳點（雲端存 rules 表、本機存獨立 key） */
   reconPoints: ReconPoint[]
   addReconPoint: (p: Omit<ReconPoint, 'id' | 'kind' | 'createdAt'>) => Promise<void>
@@ -109,6 +114,8 @@ function withPlaceholders(accs: Account[]): Account[] {
 }
 
 const LS_RECON = 'qing-ledger-recon'
+const LS_AIUSAGE = 'qing-ledger-aiusage'
+const AI_USAGE_DOC_ID = 'AI-USAGE'
 function loadReconLocal(): ReconPoint[] {
   try {
     const raw = localStorage.getItem(LS_RECON)
@@ -187,6 +194,7 @@ export const useLedger = create<LedgerState>()((set, get) => {
   usingSupabase: false,
   aiConfig: DEFAULT_AI,
   undoStack: [],
+  aiUsage: null,
   accounts: [],
   rules: [],
   reconPoints: [],
@@ -212,6 +220,22 @@ export const useLedger = create<LedgerState>()((set, get) => {
       }
     } else {
       saveLocal({ accounts: get().accounts, rules: get().rules, entries: target, companies: get().companies })
+    }
+  },
+
+  addAiUsage: async (delta) => {
+    const prev = get().aiUsage
+    const next = {
+      calls: (prev?.calls ?? 0) + delta.calls,
+      inputTokens: (prev?.inputTokens ?? 0) + delta.inputTokens,
+      outputTokens: (prev?.outputTokens ?? 0) + delta.outputTokens,
+      updatedAt: new Date().toISOString(),
+    }
+    set({ aiUsage: next })
+    if (get().usingSupabase) {
+      await supabase.from('rules').upsert({ id: AI_USAGE_DOC_ID, data: { kind: 'ai_usage', ...next } })
+    } else {
+      try { localStorage.setItem(LS_AIUSAGE, JSON.stringify(next)) } catch { /* ignore */ }
     }
   },
 
@@ -245,13 +269,15 @@ export const useLedger = create<LedgerState>()((set, get) => {
         ])
         if (!accRes.error && accRes.data) {
           const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
-          // rules 表為通用 jsonb 儲存：kind==='recon' 者為對帳點，其餘為規則
-          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint)
-          const rules = ruleRows.filter((r): r is Rule => (r as ReconPoint).kind !== 'recon')
-          const reconPoints = ruleRows.filter((r): r is ReconPoint => (r as ReconPoint).kind === 'recon')
+          // rules 表為通用 jsonb 儲存：kind==='recon' 為對帳點、kind==='ai_usage' 為用量累計，無 kind 者為規則
+          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint | Record<string, unknown>)
+          const kindOf = (r: unknown) => (r as { kind?: string }).kind
+          const rules = ruleRows.filter((r): r is Rule => kindOf(r) === undefined)
+          const reconPoints = ruleRows.filter((r): r is ReconPoint => kindOf(r) === 'recon')
+          const usageRow = ruleRows.find((r) => kindOf(r) === 'ai_usage') as (AiUsage & { updatedAt: string }) | undefined
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
           const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
-          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, entries, companies })
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, entries, companies, aiUsage: usageRow ?? null })
           // 舊資料若無流水號，自動補編（一次性）
           if (entries.some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
           return
@@ -268,6 +294,7 @@ export const useLedger = create<LedgerState>()((set, get) => {
       accounts: withPlaceholders(local?.accounts ?? DEFAULT_ACCOUNTS),
       rules: local?.rules ?? [],
       reconPoints: loadReconLocal(),
+      aiUsage: (() => { try { const r = localStorage.getItem(LS_AIUSAGE); return r ? JSON.parse(r) : null } catch { return null } })(),
       entries: local?.entries ?? [],
       companies: local?.companies ?? [],
     })

@@ -178,7 +178,14 @@ export function parseClassifyResponse(text: string, rowCount: number, accounts: 
 
 // ── 呼叫（走 Netlify 代理；本機備援直呼 Anthropic）─────────────────────────
 
-async function callClaude(system: string, user: string, cfg: AiConfig): Promise<string> {
+interface CallResult { text: string; inputTokens: number; outputTokens: number }
+
+function usageOf(u: unknown): { inputTokens: number; outputTokens: number } {
+  const o = (u ?? {}) as { input_tokens?: number; output_tokens?: number }
+  return { inputTokens: o.input_tokens ?? 0, outputTokens: o.output_tokens ?? 0 }
+}
+
+async function callClaude(system: string, user: string, cfg: AiConfig): Promise<CallResult> {
   try {
     const res = await fetch('/.netlify/functions/claude', {
       method: 'POST',
@@ -186,7 +193,9 @@ async function callClaude(system: string, user: string, cfg: AiConfig): Promise<
       body: JSON.stringify({ system, user, model: cfg.model, maxTokens: 8000 }),
     })
     const data = await res.json().catch(() => ({}))
-    if (res.ok && typeof (data as { text?: string }).text === 'string') return (data as { text: string }).text
+    if (res.ok && typeof (data as { text?: string }).text === 'string') {
+      return { text: (data as { text: string }).text, ...usageOf((data as { usage?: unknown }).usage) }
+    }
     if (res.status === 501 || res.status === 404) {
       // 代理未設定 → 本機備援
       const direct = await callDirect(system, user, cfg)
@@ -202,7 +211,7 @@ async function callClaude(system: string, user: string, cfg: AiConfig): Promise<
   }
 }
 
-async function callDirect(system: string, user: string, cfg: AiConfig): Promise<string | null> {
+async function callDirect(system: string, user: string, cfg: AiConfig): Promise<CallResult | null> {
   if (!cfg.apiKey) return null
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -221,13 +230,22 @@ async function callDirect(system: string, user: string, cfg: AiConfig): Promise<
     }),
   })
   if (!res.ok) return null
-  const data = await res.json().catch(() => null) as { content?: { type: string; text: string }[] } | null
-  return data?.content?.filter((b) => b.type === 'text').map((b) => b.text).join('') ?? null
+  const data = await res.json().catch(() => null) as { content?: { type: string; text: string }[]; usage?: unknown } | null
+  if (!data?.content) return null
+  const text = data.content.filter((b) => b.type === 'text').map((b) => b.text).join('')
+  return { text, ...usageOf(data.usage) }
 }
 
 export interface ClassifyProgress {
   done: number
   total: number
+}
+
+/** 一次分類執行的 API 用量（估算費用用） */
+export interface AiUsage {
+  calls: number
+  inputTokens: number
+  outputTokens: number
 }
 
 /**
@@ -240,18 +258,30 @@ export async function classifyRows(
   accounts: Account[],
   cfg: AiConfig,
   onProgress?: (p: ClassifyProgress) => void,
-): Promise<(AiVerdict | null)[]> {
+): Promise<{ verdicts: (AiVerdict | null)[]; usage: AiUsage }> {
   const system = buildClassifySystem(accounts)
-  const results: (AiVerdict | null)[] = []
+  const verdicts: (AiVerdict | null)[] = []
+  const usage: AiUsage = { calls: 0, inputTokens: 0, outputTokens: 0 }
   for (let i = 0; i < rows.length; i += AI_BATCH_SIZE) {
     const batch = rows.slice(i, i + AI_BATCH_SIZE)
     const examples = buildHistoryExamples(batch, entries, accounts)
     const user = buildClassifyUser(batch, examples)
-    const text = await callClaude(system, user, cfg)
-    results.push(...parseClassifyResponse(text, batch.length, accounts))
+    const r = await callClaude(system, user, cfg)
+    usage.calls++
+    usage.inputTokens += r.inputTokens
+    usage.outputTokens += r.outputTokens
+    verdicts.push(...parseClassifyResponse(r.text, batch.length, accounts))
     onProgress?.({ done: Math.min(i + AI_BATCH_SIZE, rows.length), total: rows.length })
   }
-  return results
+  return { verdicts, usage }
+}
+
+/** 估算費用（美元）：依模型牌價（每百萬 tokens）。未知模型以 opus-5 計。 */
+export function estimateCostUsd(u: AiUsage, model: string): number {
+  const price = model.includes('haiku') ? { i: 1, o: 5 }
+    : model.includes('sonnet') ? { i: 2, o: 10 }
+    : { i: 5, o: 25 } // opus-5 及預設
+  return (u.inputTokens * price.i + u.outputTokens * price.o) / 1_000_000
 }
 
 /** 由 verdict 建立分錄用中繼資料 */
