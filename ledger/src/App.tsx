@@ -14,10 +14,10 @@ import ResetPasswordPage from './components/ResetPasswordPage'
 
 type Tab = 'entry' | 'settle' | 'list' | 'reports' | 'import' | 'settings'
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'entry', label: '日記帳' },
-  { key: 'settle', label: '沖銷' },
-  { key: 'list', label: '明細' },
   { key: 'reports', label: '報表' },
+  { key: 'list', label: '明細' },
+  { key: 'settle', label: '沖銷' },
+  { key: 'entry', label: '日記帳' },
   { key: 'import', label: '匯入' },
   { key: 'settings', label: '設定' },
 ]
@@ -25,7 +25,7 @@ const TABS: { key: Tab; label: string }[] = [
 export default function App() {
   const { init, ready, usingSupabase } = useLedger()
   const auth = useAuth()
-  const [tab, setTab] = useState<Tab>('entry')
+  const [tab, setTab] = useState<Tab>('reports')
 
   useEffect(() => { auth.init() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

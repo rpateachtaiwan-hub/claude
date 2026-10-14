@@ -26,21 +26,34 @@ const TABLE_ZH: Record<string, string> = { entries: '交易', accounts: '科目'
 export default function AuditTrail() {
   const { addEntriesBulk, entries } = useLedger()
   const [rows, setRows] = useState<AuditRow[] | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const [state, setState] = useState<'loading' | 'ready' | 'missing'>('loading')
   const [q, setQ] = useState('')
   const [openId, setOpenId] = useState<number | null>(null)
   const [loadedAll, setLoadedAll] = useState(false)
 
+  // 分頁讀取（每頁 50）：永遠不會把整張軌跡表載進瀏覽器，筆數再多也不影響效能
+  const PAGE = 50
   const load = React.useCallback(async (beforeId?: number) => {
-    let query = supabase.from('audit_log').select('*').order('id', { ascending: false }).limit(200)
+    let query = supabase.from('audit_log').select('*').order('id', { ascending: false }).limit(PAGE)
     if (beforeId) query = query.lt('id', beforeId)
     const { data, error } = await query
     if (error) { setState('missing'); return }
     setState('ready')
     setRows((prev) => (beforeId && prev ? [...prev, ...(data as AuditRow[])] : (data as AuditRow[])))
-    if (!data || data.length < 200) setLoadedAll(true)
+    if (!data || data.length < PAGE) setLoadedAll(true)
   }, [])
-  useEffect(() => { load() }, [load])
+  // 預設收合：展開時才查詢，平常開設定頁不產生任何讀取
+  useEffect(() => { if (expanded) load() }, [expanded, load])
+
+  if (!expanded) {
+    return (
+      <button onClick={() => setExpanded(true)}
+        className="w-full text-left text-sm text-gray-600 bg-white border border-gray-200 rounded-xl px-4 py-3 hover:bg-gray-50">
+        ▸ 展開查看操作軌跡（每次載入 50 筆，可往前翻頁；平時收合不讀取資料）
+      </button>
+    )
+  }
 
   /** 交易列的摘要（entries 表的 data 欄是完整分錄） */
   function entryOf(r: AuditRow): JournalEntry | null {
@@ -89,6 +102,7 @@ export default function AuditTrail() {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 搜尋 操作者 / 流水號 / 摘要…"
           className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand" />
         <button onClick={() => { setLoadedAll(false); load() }} className="text-xs text-gray-400 hover:text-gray-600">↻ 重新整理</button>
+        <button onClick={() => setExpanded(false)} className="text-xs text-gray-400 hover:text-gray-600">▴ 收合</button>
       </div>
       {state === 'loading' && <p className="text-xs text-gray-400">載入中…</p>}
       {rows && (
