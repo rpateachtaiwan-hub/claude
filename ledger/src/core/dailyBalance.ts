@@ -99,6 +99,13 @@ export interface DailyCheck {
   anchor?: DailyBalance
   /** 錨點是否正好在起算日 */
   anchorOnDate: boolean
+  /**
+   * 帳上餘額（自開帳累計至錨點日，含當日）。應等於錨點的銀行餘額；
+   * 不等代表起算日前的歷史資料或期初餘額有誤（資產負債表的銀行存款會錯，但每日核對看不出來）。
+   */
+  bookAtAnchor?: number
+  /** 帳上餘額 − 錨點銀行餘額 */
+  anchorDiff?: number
   /** 自錨點（不含）起至 upTo 的逐日列：有流水或有銀行餘額的日期都列出，依日期遞增 */
   rows: DailyRow[]
   /** 最近一個有銀行餘額的核對列 */
@@ -135,6 +142,10 @@ export function dailyCheck(
   if (!anchor) return base
 
   const net = dailyNet(entries, pair)
+  let book = 0
+  for (const [d, n] of net) if (d <= anchor.date) book += n
+  base.bookAtAnchor = book
+  base.anchorDiff = book - anchor.balance
   const bankByDate = new Map(mine.map((b) => [b.date, b.balance]))
   const dates = new Set<string>()
   for (const d of net.keys()) if (d > anchor.date && d <= upTo) dates.add(d)

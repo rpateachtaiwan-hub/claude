@@ -61,6 +61,15 @@ describe('每日可用餘額核對', () => {
     expect(c.latest?.diff).toBe(0)
   })
 
+  it('起算日帳上餘額（自開帳累計，含起算日當天）vs 起算銀行餘額', () => {
+    const entries = [inflow('2025-06-01', 80_000), inflow('2025-12-20', 19_000), inflow('2026-01-01', 1_000), inflow('2026-01-05', 5)]
+    const ok = dailyCheck(entries, [bal('2026-01-01', 100_000)], P, '2026-12-31')
+    expect(ok.bookAtAnchor).toBe(100_000)
+    expect(ok.anchorDiff).toBe(0)
+    const bad = dailyCheck(entries.slice(1), [bal('2026-01-01', 100_000)], P, '2026-12-31') // 漏了 2025 期初
+    expect(bad.anchorDiff).toBe(-80_000)
+  })
+
   it('無錨點：不產生核對列', () => {
     const c = dailyCheck([inflow('2026-01-03', 10)], [], P, '2026-12-31')
     expect(c.anchor).toBeUndefined()

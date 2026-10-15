@@ -3,10 +3,9 @@ import { useLedger } from '../store/useLedger'
 import { accountDrilldown, balanceSheet, cashFlow, profitAndLoss, type DrillItem, type Pnl } from '../core/reports'
 import { formatTWD } from '../core/money'
 import { downloadCSV, toCSV } from '../lib/csv'
-import Recon from './Recon'
 import DailyBalance from './DailyBalance'
 
-type Tab = 'pnl' | 'bs' | 'cf' | 'recon' | 'daily'
+type Tab = 'pnl' | 'bs' | 'cf' | 'daily'
 type Gran = 'all' | 'year' | 'month'
 
 /** 下鑽目標：month = 0–11 為矩陣的月欄、-1 為全年欄、undefined 為一般損益表列 */
@@ -121,16 +120,15 @@ export default function Reports() {
   return (
     <div className="w-full p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        {([['pnl', '損益表'], ['bs', '資產負債表'], ['cf', '現金流量表'], ['recon', '銀行對帳'], ['daily', '每日餘額核對']] as [Tab, string][]).map(([t, l]) => (
+        {([['pnl', '損益表'], ['bs', '資產負債表'], ['cf', '現金流量表'], ['daily', '每日餘額核對']] as [Tab, string][]).map(([t, l]) => (
           <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 rounded-lg text-sm font-medium ${tab === t ? 'bg-brand text-white' : 'bg-white border border-gray-300 text-gray-600'}`}>{l}</button>
         ))}
-        {tab !== 'recon' && tab !== 'daily' && <button onClick={exportCsv} className="ml-auto px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">⬇ 匯出 Excel</button>}
+        {tab !== 'daily' && <button onClick={exportCsv} className="ml-auto px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">⬇ 匯出 Excel</button>}
       </div>
 
-      {tab === 'recon' && <Recon />}
       {tab === 'daily' && <DailyBalance />}
 
-      {tab !== 'recon' && tab !== 'daily' && <div className="flex flex-wrap items-center gap-2 text-sm">
+      {tab !== 'daily' && <div className="flex flex-wrap items-center gap-2 text-sm">
         {companies.length > 0 && (
           <select value={companyFilter} onChange={(e) => setCompanyFilter(e.target.value)}
             className="border border-gray-300 rounded px-2 py-1.5 font-medium">
@@ -162,7 +160,7 @@ export default function Reports() {
         </div>
       </div>}
 
-      {tab !== 'recon' && tab !== 'daily' && <div style={{ ['zoom' as keyof React.CSSProperties]: zoom } as React.CSSProperties}>
+      {tab !== 'daily' && <div style={{ ['zoom' as keyof React.CSSProperties]: zoom } as React.CSSProperties}>
         {tab === 'pnl' && !matrix && (
           <Card title="損益表" subtitle={`${label} · 點科目列可展開分錄明細`}>
             <Section label="收入">{pnl.rows.filter((r) => r.category === 'revenue').map((r, i) => (

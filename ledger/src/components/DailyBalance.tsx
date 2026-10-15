@@ -141,7 +141,7 @@ export default function DailyBalance() {
       <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
         以 <b>{ANCHOR_DATE.replace(/-/g, '/')} 的銀行餘額為起點</b>，加上之後每天匯入的銀行流水，推算各公司、各銀行帳戶的每日日終餘額，
         再與當天的<b>銀行帳戶餘額</b>比對。差額<b>「新增」</b>的那一天，就是那段期間的匯入有漏、重複或金額錯誤。
-        不受起算日之前的歷史資料影響。餘額請填<b>當日日終</b>數字（例如隔天早上看到的前一日餘額）。
+        每日核對不受起算日之前的歷史資料影響；總覽的「帳上起算餘額」另外檢查系統自開帳累計到起算日的餘額是否等於銀行，確保資產負債表的銀行存款正確。餘額請填<b>當日日終</b>數字（例如隔天早上看到的前一日餘額）。
         <br />※ 核對用的是網銀的<b>「帳戶餘額」</b>：「可用餘額」＝帳戶餘額 − 當日交換票 − 圈存 ＋ 透支額度，有圈存或透支時會與流水推算不同。
         標 <span className="text-[10px] px-1 rounded bg-violet-100 text-violet-700">RPA</span> 者為機器人自動填入。
       </div>
@@ -255,10 +255,12 @@ export default function DailyBalance() {
       {/* 總覽 */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <div className="px-4 pt-3 text-sm font-medium text-gray-700">核對總覽（點一列看逐日明細）</div>
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[920px] text-sm">
           <thead><tr className="text-gray-500 text-xs">
             <th className="px-3 py-2 text-left">公司</th><th className="px-3 py-2 text-left">銀行科目</th>
-            <th className="px-3 py-2 text-right">起算餘額</th><th className="px-3 py-2 text-left">最近核對日</th>
+            <th className="px-3 py-2 text-right">起算餘額（銀行）</th>
+            <th className="px-3 py-2 text-right" title="系統自開帳累計到起算日的銀行科目餘額；應等於銀行起算餘額，不符代表起算日前的歷史資料或期初有誤">帳上起算餘額</th>
+            <th className="px-3 py-2 text-left">最近核對日</th>
             <th className="px-3 py-2 text-right">推算 / 銀行</th><th className="px-3 py-2 text-right">差額</th>
             <th className="px-3 py-2 text-left">第一個差異日</th><th className="px-3 py-2 text-right">未填天數</th>
           </tr></thead>
@@ -276,6 +278,10 @@ export default function DailyBalance() {
                     {c.anchor
                       ? <>{formatTWD(c.anchor.balance)}{!c.anchorOnDate && <div className="text-[11px] text-amber-600">以 {c.anchor.date} 起算</div>}</>
                       : <span className="text-xs text-red-600">未填 {ANCHOR_DATE} 餘額</span>}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {c.anchorDiff === undefined ? <span className="text-gray-300">—</span>
+                      : <>{formatTWD(c.bookAtAnchor!)}<div className={`text-[11px] ${c.anchorDiff === 0 ? 'text-green-600' : 'text-red-600 font-medium'}`}>{c.anchorDiff === 0 ? '✓ 與銀行相符' : `✗ 差 ${formatTWD(c.anchorDiff)}`}</div></>}
                   </td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{c.latest?.date ?? '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-600">
