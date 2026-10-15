@@ -10,6 +10,7 @@ import { composeEntry, sourceFromLegs, suggest } from '../core/suggest'
 import { buildSettlement, openItems as computeOpenItems, type OpenItem } from '../core/settle'
 import { mergeToCash, splitToAccrual } from '../core/accrualSplit'
 import type { ReconPoint } from '../core/recon'
+import { dailyBalanceId, type DailyBalance } from '../core/dailyBalance'
 import type { AiUsage } from '../core/aiClassify'
 import { buildEntry, newId } from '../core/engine'
 import type { AiConfig } from '../core/ai'
@@ -54,6 +55,11 @@ interface LedgerState extends PersistShape {
   reconPoints: ReconPoint[]
   addReconPoint: (p: Omit<ReconPoint, 'id' | 'kind' | 'createdAt'>) => Promise<void>
   deleteReconPoint: (id: string) => Promise<void>
+  /** 每日銀行可用餘額（雲端存 rules 表、本機存獨立 key） */
+  dailyBalances: DailyBalance[]
+  /** 新增/覆寫每日餘額（同公司+科目+日期只留一筆） */
+  saveDailyBalances: (rows: Omit<DailyBalance, 'id' | 'kind' | 'updatedAt'>[]) => Promise<void>
+  deleteDailyBalances: (ids: string[]) => Promise<void>
 
   init: () => Promise<void>
   /** 離線/無金鑰時的預設建議（不含學習規則） */
@@ -128,6 +134,45 @@ function saveReconLocal(pts: ReconPoint[]) {
   localStorage.setItem(LS_RECON, JSON.stringify(pts))
 }
 
+const LS_DAILY = 'qing-ledger-dailybal'
+function loadDailyLocal(): DailyBalance[] {
+  try {
+    const raw = localStorage.getItem(LS_DAILY)
+    return raw ? (JSON.parse(raw) as DailyBalance[]) : []
+  } catch {
+    return []
+  }
+}
+function saveDailyLocal(rows: DailyBalance[]) {
+  localStorage.setItem(LS_DAILY, JSON.stringify(rows))
+}
+
+/** 科目改編號/合併時，把每日餘額改掛到新科目（id 含科目，故需換 id；合併撞同日者相加）。 */
+function remapDaily(rows: DailyBalance[], fromCode: string, toCode: string) {
+  const moved = rows.filter((r) => r.accountCode === fromCode)
+  if (!moved.length) return { rows, upsert: [] as DailyBalance[], removeIds: [] as string[] }
+  const byId = new Map(rows.filter((r) => r.accountCode !== fromCode).map((r) => [r.id, r]))
+  const upsert: DailyBalance[] = []
+  for (const r of moved) {
+    const id = dailyBalanceId(r.company, toCode, r.date)
+    const hit = byId.get(id)
+    const nr: DailyBalance = { ...r, id, accountCode: toCode, balance: r.balance + (hit?.balance ?? 0), updatedAt: new Date().toISOString() }
+    byId.set(id, nr)
+    upsert.push(nr)
+  }
+  return { rows: [...byId.values()], upsert, removeIds: moved.map((r) => r.id) }
+}
+
+async function syncDailyRemap(usingSupabase: boolean, r: ReturnType<typeof remapDaily>) {
+  if (!r.upsert.length) return
+  if (usingSupabase) {
+    await supabase.from('rules').delete().in('id', r.removeIds)
+    await supabase.from('rules').upsert(r.upsert.map((p) => ({ id: p.id, data: p })))
+  } else {
+    saveDailyLocal(r.rows)
+  }
+}
+
 function loadLocal(): PersistShape | null {
   try {
     const raw = localStorage.getItem(LS_KEY)
@@ -198,6 +243,7 @@ export const useLedger = create<LedgerState>()((set, get) => {
   accounts: [],
   rules: [],
   reconPoints: [],
+  dailyBalances: [],
   entries: [],
   companies: [],
 
@@ -254,6 +300,33 @@ export const useLedger = create<LedgerState>()((set, get) => {
     else saveReconLocal(reconPoints)
   },
 
+  saveDailyBalances: async (input) => {
+    const now = new Date().toISOString()
+    const map = new Map(get().dailyBalances.map((r) => [r.id, r]))
+    const upsert: DailyBalance[] = []
+    for (const r of input) {
+      const row: DailyBalance = { ...r, id: dailyBalanceId(r.company, r.accountCode, r.date), kind: 'daily_bal', updatedAt: now }
+      map.set(row.id, row)
+      upsert.push(row)
+    }
+    const dailyBalances = [...map.values()]
+    set({ dailyBalances })
+    if (get().usingSupabase) {
+      for (let i = 0; i < upsert.length; i += 500) {
+        const { error } = await supabase.from('rules').upsert(upsert.slice(i, i + 500).map((p) => ({ id: p.id, data: p })))
+        if (error) throw new Error(error.message)
+      }
+    } else saveDailyLocal(dailyBalances)
+  },
+
+  deleteDailyBalances: async (ids) => {
+    const drop = new Set(ids)
+    const dailyBalances = get().dailyBalances.filter((r) => !drop.has(r.id))
+    set({ dailyBalances })
+    if (get().usingSupabase) await supabase.from('rules').delete().in('id', ids)
+    else saveDailyLocal(dailyBalances)
+  },
+
   init: async () => {
     if (hasSupabase) {
       try {
@@ -269,15 +342,16 @@ export const useLedger = create<LedgerState>()((set, get) => {
         ])
         if (!accRes.error && accRes.data) {
           const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
-          // rules 表為通用 jsonb 儲存：kind==='recon' 為對帳點、kind==='ai_usage' 為用量累計，無 kind 者為規則
-          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint | Record<string, unknown>)
+          // rules 表為通用 jsonb 儲存：kind==='recon' 為對帳點、kind==='daily_bal' 為每日餘額、kind==='ai_usage' 為用量累計，無 kind 者為規則
+          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint | DailyBalance | Record<string, unknown>)
           const kindOf = (r: unknown) => (r as { kind?: string }).kind
           const rules = ruleRows.filter((r): r is Rule => kindOf(r) === undefined)
           const reconPoints = ruleRows.filter((r): r is ReconPoint => kindOf(r) === 'recon')
+          const dailyBalances = ruleRows.filter((r): r is DailyBalance => kindOf(r) === 'daily_bal')
           const usageRow = ruleRows.find((r) => kindOf(r) === 'ai_usage') as (AiUsage & { updatedAt: string }) | undefined
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
           const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
-          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, entries, companies, aiUsage: usageRow ?? null })
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, dailyBalances, entries, companies, aiUsage: usageRow ?? null })
           // 舊資料若無流水號，自動補編（一次性）
           if (entries.some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
           return
@@ -294,6 +368,7 @@ export const useLedger = create<LedgerState>()((set, get) => {
       accounts: withPlaceholders(local?.accounts ?? DEFAULT_ACCOUNTS),
       rules: local?.rules ?? [],
       reconPoints: loadReconLocal(),
+      dailyBalances: loadDailyLocal(),
       aiUsage: (() => { try { const r = localStorage.getItem(LS_AIUSAGE); return r ? JSON.parse(r) : null } catch { return null } })(),
       entries: local?.entries ?? [],
       companies: local?.companies ?? [],
@@ -410,7 +485,9 @@ export const useLedger = create<LedgerState>()((set, get) => {
         return np
       })
     }
-    set({ accounts, entries, reconPoints: recon })
+    const daily = codeChanged ? remapDaily(get().dailyBalances, oldCode, a.code) : remapDaily([], '', '')
+    set({ accounts, entries, reconPoints: recon, ...(daily.upsert.length ? { dailyBalances: daily.rows } : {}) })
+    await syncDailyRemap(get().usingSupabase, daily)
     if (get().usingSupabase) {
       if (codeChanged) await supabase.from('accounts').delete().eq('code', oldCode)
       await supabase.from('accounts').upsert({ code: a.code, data: a })
@@ -444,7 +521,9 @@ export const useLedger = create<LedgerState>()((set, get) => {
       return np
     })
     const accounts = get().accounts.filter((x) => x.code !== fromCode)
-    set({ accounts, entries, reconPoints: recon })
+    const daily = remapDaily(get().dailyBalances, fromCode, toCode)
+    set({ accounts, entries, reconPoints: recon, ...(daily.upsert.length ? { dailyBalances: daily.rows } : {}) })
+    await syncDailyRemap(get().usingSupabase, daily)
     if (get().usingSupabase) {
       await supabase.from('accounts').delete().eq('code', fromCode)
       for (let i = 0; i < touched.length; i += 500) {
