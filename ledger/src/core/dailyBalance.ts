@@ -6,12 +6,20 @@
 // 餘額一律視為「日終餘額」（含當日交易）。純函式，方便測試。
 // =============================================================================
 
-import type { JournalEntry } from './types'
+import type { Account, JournalEntry } from './types'
+
+/**
+ * 是否為要核對的銀行帳戶：現金類科目中名稱含「銀行」或「存款」者。
+ * 零用金、庫存現金等現金科目沒有銀行餘額可比對，不列入。
+ */
+export function isBankAccount(a: Pick<Account, 'isCash' | 'name'>): boolean {
+  return !!a.isCash && /銀行|存款/.test(a.name) && !/零用金|庫存現金/.test(a.name)
+}
 
 /** 預設起算日 */
 export const ANCHOR_DATE = '2026-01-01'
 
-/** 某公司某銀行科目某日的銀行可用餘額（使用者每日輸入；雲端存 rules 表） */
+/** 某公司某銀行科目某日的銀行餘額（由機器人經 bank-balance API 寫入；存 rules 表） */
 export interface DailyBalance {
   id: string
   /** 標記，與 rules 表其他資料區分（同表共存） */
@@ -25,7 +33,7 @@ export interface DailyBalance {
   balance: number
   /** 網銀「可用餘額」（僅記錄；= 帳戶餘額 − 當日交換票 − 圈存 + 透支額度） */
   available?: number
-  /** 來源：機器人寫入為 'rpa'；人工輸入不帶 */
+  /** 來源：機器人寫入為 'rpa'（本功能僅開放機器人寫入；早期人工輸入者不帶）*/
   source?: 'rpa'
   updatedAt: string
 }
@@ -118,14 +126,6 @@ export interface DailyCheck {
   missingCount: number
 }
 
-/** 推算某日（日終）的系統餘額；錨點日之前或無錨點回傳 undefined。 */
-export function computedBalanceOn(net: Map<string, number>, anchor: DailyBalance | undefined, date: string): number | undefined {
-  if (!anchor || date < anchor.date) return undefined
-  let s = anchor.balance
-  for (const [d, n] of net) if (d > anchor.date && d <= date) s += n
-  return s
-}
-
 /** 逐日核對單一（公司, 科目）。 */
 export function dailyCheck(
   entries: JournalEntry[],
@@ -176,64 +176,4 @@ export function dailyCheck(
   }
   base.rows = rows
   return base
-}
-
-export interface ParsedBalanceRow {
-  line: number
-  date: string
-  company: string
-  accountCode: string
-  balance: number
-}
-
-/**
- * 解析貼上/上傳的餘額表（每列：日期、公司、科目、餘額；首列可為標題）。
- * 科目可填代號或名稱；日期接受 2026-01-05、2026/1/5、115/1/5（民國）。
- */
-export function parseBalanceRows(
-  rows: string[][],
-  resolveAccount: (s: string) => string | undefined,
-  companies: string[],
-): { ok: ParsedBalanceRow[]; errors: string[] } {
-  const ok: ParsedBalanceRow[] = []
-  const errors: string[] = []
-  rows.forEach((r, i) => {
-    const line = i + 1
-    const cells = r.map((c) => String(c ?? '').trim())
-    if (cells.every((c) => c === '')) return
-    if (i === 0 && !normDate(cells[0])) return // 標題列
-    const [dRaw, coRaw = '', accRaw = '', balRaw = ''] = cells
-    const date = normDate(dRaw)
-    if (!date) return void errors.push(`第 ${line} 列：日期「${dRaw}」無法辨識`)
-    const company = coRaw === '-' || coRaw === '—' ? '' : coRaw
-    if (company && companies.length && !companies.includes(company)) return void errors.push(`第 ${line} 列：公司「${company}」不存在`)
-    const accountCode = resolveAccount(accRaw)
-    if (!accountCode) return void errors.push(`第 ${line} 列：科目「${accRaw}」不是銀行/現金科目`)
-    const balance = parseAmount(balRaw)
-    if (balance === null) return void errors.push(`第 ${line} 列：餘額「${balRaw}」不是數字`)
-    ok.push({ line, date, company, accountCode, balance })
-  })
-  return { ok, errors }
-}
-
-/** 金額字串 → 整數元；容許千分位、空白、NT$、括號負數。 */
-export function parseAmount(s: string): number | null {
-  let t = String(s ?? '').replace(/[,\s]|NT\$|\$|元/g, '')
-  if (t === '') return null
-  let neg = false
-  if (/^\(.*\)$/.test(t)) { neg = true; t = t.slice(1, -1) }
-  if (!/^-?\d+(\.\d+)?$/.test(t)) return null
-  const n = Math.round(Number(t))
-  return neg ? -n : n
-}
-
-/** 日期字串 → YYYY-MM-DD；接受西元或民國年，分隔符 - / .。無法辨識回傳 null。 */
-export function normDate(s: string): string | null {
-  const m = String(s ?? '').trim().match(/^(\d{2,4})[-/.](\d{1,2})[-/.](\d{1,2})$/)
-  if (!m) return null
-  let y = Number(m[1])
-  if (y < 1911) y += 1911
-  const mo = Number(m[2]), d = Number(m[3])
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null
-  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }

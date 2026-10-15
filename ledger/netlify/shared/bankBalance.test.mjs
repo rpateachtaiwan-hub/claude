@@ -19,6 +19,9 @@ describe('帳號 → 銀行科目', () => {
   it('完整帳號、含連字號輸入', () => {
     expect(matchAccountByNo(ACCOUNTS, '0010-3501-6976')).toEqual({ code: '1102' })
   })
+  it('零用金等非銀行科目即使名稱含帳號也不對應', () => {
+    expect(matchAccountByNo([{ code: '1101', name: '零用金(062-010608)', isCash: true }], '062035010608').error).toMatch(/找不到/)
+  })
   it('外匯或未登錄帳號 → 錯誤', () => {
     expect(matchAccountByNo(ACCOUNTS, '031087072820').error).toMatch(/找不到/)
   })

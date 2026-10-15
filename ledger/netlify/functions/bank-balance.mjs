@@ -15,7 +15,7 @@
 
 import { timingSafeEqual } from 'node:crypto'
 import {
-  ANCHOR_DATE, checkOn, companyByHolderName, dailyBalanceId, dominantCompany, matchAccountByNo, normalizeRow,
+  ANCHOR_DATE, checkOn, companyByHolderName, dailyBalanceId, dominantCompany, isBankAccount, matchAccountByNo, normalizeRow,
 } from '../shared/bankBalance.mjs'
 
 export async function handler(event) {
@@ -56,7 +56,7 @@ async function route(event) {
     const r = n.row
     let code = r.accountCode
     if (code) {
-      if (!accounts.some((a) => a.code === code && a.isCash)) { errors.push(`第 ${i + 1} 筆：科目 ${code} 不是銀行/現金科目`); continue }
+      if (!accounts.some((a) => a.code === code && isBankAccount(a))) { errors.push(`第 ${i + 1} 筆：科目 ${code} 不是銀行存款科目`); continue }
     } else {
       const m = matchAccountByNo(accounts, r.accountNo)
       if (m.error) { errors.push(`第 ${i + 1} 筆：${m.error}`); continue }

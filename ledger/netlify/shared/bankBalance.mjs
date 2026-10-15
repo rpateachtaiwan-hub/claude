@@ -10,6 +10,9 @@ export const dailyBalanceId = (company, accountCode, date) => `DB|${company}|${a
 
 const digits = (s) => String(s ?? '').replace(/\D/g, '')
 
+/** 是否為要核對的銀行帳戶（與前端 isBankAccount 相同）：零用金等現金科目不列入。 */
+export const isBankAccount = (a) => !!a?.isCash && /銀行|存款/.test(a.name ?? '') && !/零用金|庫存現金/.test(a.name ?? '')
+
 /**
  * 以銀行帳號找系統的銀行科目：比對科目名稱括號內的帳號。
  * 支援完整帳號（001035016976）與國泰簡寫「分行3碼-末6碼」（062-010608 ↔ 062035010608）。
@@ -20,7 +23,7 @@ export function matchAccountByNo(accounts, accountNo) {
   if (no.length < 6) return { error: `帳號「${accountNo}」格式不正確` }
   const hits = []
   for (const a of accounts) {
-    if (!a || !a.isCash) continue
+    if (!isBankAccount(a)) continue
     const groups = String(a.name ?? '').match(/\d[\d-]{4,}\d/g) ?? []
     const ok = groups.some((g) => {
       const parts = g.split('-')

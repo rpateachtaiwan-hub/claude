@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { twoLegEntry } from './engine'
-import {
-  balancePairs, computedBalanceOn, dailyBalanceId, dailyCheck, dailyNet, normDate, parseAmount, parseBalanceRows,
-  type DailyBalance,
-} from './dailyBalance'
+import { balancePairs, dailyBalanceId, dailyCheck, dailyNet, isBankAccount, type DailyBalance } from './dailyBalance'
 
 const inflow = (date: string, amount: number, company = '菸酒', bank = '1102') =>
   ({ ...twoLegEntry({ date, description: '收', source: 'cash', amount, debitCode: bank, creditCode: '4104' }), company })
@@ -89,36 +86,14 @@ describe('每日可用餘額核對', () => {
     ])
   })
 
-  it('任一日推算餘額', () => {
-    const net = dailyNet([inflow('2026-01-05', 100), outflow('2026-01-09', 30)], P)
-    const a = bal('2026-01-01', 1_000)
-    expect(computedBalanceOn(net, a, '2026-01-08')).toBe(1_100)
-    expect(computedBalanceOn(net, a, '2026-01-09')).toBe(1_070)
-    expect(computedBalanceOn(net, a, '2025-12-31')).toBeUndefined()
-  })
 })
 
-describe('餘額表解析', () => {
-  const resolve = (s: string) => (s === '1102' || s === '彰銀' ? '1102' : undefined)
-  it('標題列略過、民國/斜線日期、千分位、科目名稱', () => {
-    const { ok, errors } = parseBalanceRows([
-      ['日期', '公司', '科目', '餘額'],
-      ['115/1/1', '菸酒', '彰銀', '1,234,567'],
-      ['2026/01/02', '菸酒', '1102', '(500)'],
-      ['2026-01-03', '不存在', '1102', '1'],
-      ['2026-01-04', '菸酒', '9999', '1'],
-      ['abc', '菸酒', '1102', '1'],
-    ], resolve, ['菸酒'])
-    expect(ok.map((r) => [r.date, r.company, r.accountCode, r.balance])).toEqual([
-      ['2026-01-01', '菸酒', '1102', 1_234_567],
-      ['2026-01-02', '菸酒', '1102', -500],
-    ])
-    expect(errors).toHaveLength(3)
-  })
-  it('normDate / parseAmount', () => {
-    expect(normDate('2026.1.5')).toBe('2026-01-05')
-    expect(normDate('2026-13-01')).toBeNull()
-    expect(parseAmount('NT$ 1,000')).toBe(1000)
-    expect(parseAmount('')).toBeNull()
+describe('銀行科目判定', () => {
+  it('零用金/現金不列入，銀行存款列入', () => {
+    expect(isBankAccount({ isCash: true, name: '現金/零用金' })).toBe(false)
+    expect(isBankAccount({ isCash: true, name: '現金' })).toBe(false)
+    expect(isBankAccount({ isCash: true, name: '銀行存款-國泰娛樂(062-010608)' })).toBe(true)
+    expect(isBankAccount({ isCash: true, name: '銀行存款-台企銀' })).toBe(true)
+    expect(isBankAccount({ isCash: false, name: '銀行借款' })).toBe(false)
   })
 })

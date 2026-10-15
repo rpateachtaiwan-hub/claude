@@ -55,11 +55,8 @@ interface LedgerState extends PersistShape {
   reconPoints: ReconPoint[]
   addReconPoint: (p: Omit<ReconPoint, 'id' | 'kind' | 'createdAt'>) => Promise<void>
   deleteReconPoint: (id: string) => Promise<void>
-  /** 每日銀行可用餘額（雲端存 rules 表、本機存獨立 key） */
+  /** 每日銀行餘額（唯讀；由機器人經 bank-balance API 寫入 rules 表） */
   dailyBalances: DailyBalance[]
-  /** 新增/覆寫每日餘額（同公司+科目+日期只留一筆） */
-  saveDailyBalances: (rows: Omit<DailyBalance, 'id' | 'kind' | 'updatedAt'>[]) => Promise<void>
-  deleteDailyBalances: (ids: string[]) => Promise<void>
 
   init: () => Promise<void>
   /** 離線/無金鑰時的預設建議（不含學習規則） */
@@ -298,33 +295,6 @@ export const useLedger = create<LedgerState>()((set, get) => {
     set({ reconPoints })
     if (get().usingSupabase) await supabase.from('rules').delete().eq('id', id)
     else saveReconLocal(reconPoints)
-  },
-
-  saveDailyBalances: async (input) => {
-    const now = new Date().toISOString()
-    const map = new Map(get().dailyBalances.map((r) => [r.id, r]))
-    const upsert: DailyBalance[] = []
-    for (const r of input) {
-      const row: DailyBalance = { ...r, id: dailyBalanceId(r.company, r.accountCode, r.date), kind: 'daily_bal', updatedAt: now }
-      map.set(row.id, row)
-      upsert.push(row)
-    }
-    const dailyBalances = [...map.values()]
-    set({ dailyBalances })
-    if (get().usingSupabase) {
-      for (let i = 0; i < upsert.length; i += 500) {
-        const { error } = await supabase.from('rules').upsert(upsert.slice(i, i + 500).map((p) => ({ id: p.id, data: p })))
-        if (error) throw new Error(error.message)
-      }
-    } else saveDailyLocal(dailyBalances)
-  },
-
-  deleteDailyBalances: async (ids) => {
-    const drop = new Set(ids)
-    const dailyBalances = get().dailyBalances.filter((r) => !drop.has(r.id))
-    set({ dailyBalances })
-    if (get().usingSupabase) await supabase.from('rules').delete().in('id', ids)
-    else saveDailyLocal(dailyBalances)
   },
 
   init: async () => {
