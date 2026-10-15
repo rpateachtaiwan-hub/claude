@@ -4,14 +4,20 @@
 // 推算餘額 = 起算日(含)後最早一筆餘額為錨點 + 錨點後至當日的銀行科目淨變動。
 // =============================================================================
 
-export const ANCHOR_DATE = '2026-01-01'
+import { ANCHOR_DATE, OPENING_BALANCES } from './openingBalances.mjs'
+
+export { ANCHOR_DATE, OPENING_BALANCES }
 
 export const dailyBalanceId = (company, accountCode, date) => `DB|${company}|${accountCode}|${date}`
 
 const digits = (s) => String(s ?? '').replace(/\D/g, '')
 
-/** 是否為要核對的銀行帳戶（與前端 isBankAccount 相同）：零用金等現金科目不列入。 */
-export const isBankAccount = (a) => !!a?.isCash && /銀行|存款/.test(a.name ?? '') && !/零用金|庫存現金/.test(a.name ?? '')
+/**
+ * 是否為要核對的銀行帳戶（與前端 isBankAccount 相同）：匯入時的「銀行現金腳」科目，即名稱註明銀行帳號者。
+ * 零用金、外幣及其他未註明帳號的存款科目不列入。
+ */
+export const isBankAccount = (a) =>
+  !!a?.isCash && /\d{3}-\d{6}|\d{10,}/.test(a.name ?? '') && !/零用金|庫存現金|外幣|外匯/.test(a.name ?? '')
 
 /**
  * 以銀行帳號找系統的銀行科目：比對科目名稱括號內的帳號。
@@ -109,18 +115,14 @@ export function netOf(entry, accountCode) {
 }
 
 /**
- * 推算某日日終餘額並與銀行比對。
- * balances：該（公司, 科目）所有每日餘額（含本次寫入）；entries：該公司含此科目的分錄。
+ * 推算某日日終餘額並與同日銀行餘額比對：
+ * 推算 = 起算餘額（openingBalances.mjs）+ 起算日後至當日所有分錄在該銀行科目的淨變動（不分公司）。
  */
-export function checkOn(balances, entries, accountCode, date, anchorDate = ANCHOR_DATE) {
-  const sorted = balances.filter((b) => b.date >= anchorDate).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-  const anchor = sorted[0]
-  if (!anchor) return { status: 'no_anchor' }
-  if (anchor.date === date) return { status: 'anchor', anchorDate: anchor.date, computed: anchor.balance, diff: 0 }
-  if (date < anchor.date) return { status: 'before_anchor', anchorDate: anchor.date }
-  let computed = anchor.balance
-  for (const e of entries) if (e.date > anchor.date && e.date <= date) computed += netOf(e, accountCode)
-  const bank = sorted.find((b) => b.date === date)?.balance
-  const diff = bank === undefined ? undefined : computed - bank
-  return { status: diff === 0 ? 'match' : 'mismatch', anchorDate: anchor.date, computed, diff }
+export function checkOn(opening, entries, accountCode, date, bank, anchorDate = ANCHOR_DATE) {
+  if (opening === undefined) return { status: 'no_anchor' }
+  if (date <= anchorDate) return { status: 'before_anchor' }
+  let computed = opening
+  for (const e of entries) if (e.date > anchorDate && e.date <= date) computed += netOf(e, accountCode)
+  const diff = computed - bank
+  return { status: diff === 0 ? 'match' : 'mismatch', computed, diff }
 }

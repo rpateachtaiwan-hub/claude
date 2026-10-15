@@ -9,13 +9,14 @@
 //   - balance = 網銀「帳戶餘額」（用於核對）；available = 「可用餘額」（僅記錄）
 //   - dryRun: true 只檢查對應與核對結果，不寫入
 // 回應：{ ok, written, results: [{ date, accountNo, accountCode, company, balance, status, computed, diff }], errors }
-//   status：match 相符 / mismatch 不符 / anchor 起算日 / no_anchor 尚無起算餘額 / before_anchor
+//   status：match 相符 / mismatch 不符 / no_anchor 尚未設定起算餘額（netlify/shared/openingBalances.mjs）/ before_anchor 起算日當天或之前
+//   推算 = 起算餘額 + 起算日後所有分錄在該銀行科目的淨變動（不分公司），與同日銀行帳戶餘額比對
 //
 // 金鑰：SUPABASE_SERVICE_ROLE_KEY 與 ROBOT_TOKEN 只存在伺服器端環境變數。
 
 import { timingSafeEqual } from 'node:crypto'
 import {
-  ANCHOR_DATE, checkOn, companyByHolderName, dailyBalanceId, dominantCompany, isBankAccount, matchAccountByNo, normalizeRow,
+  ANCHOR_DATE, OPENING_BALANCES, checkOn, companyByHolderName, dailyBalanceId, dominantCompany, isBankAccount, matchAccountByNo, normalizeRow,
 } from '../shared/bankBalance.mjs'
 
 export async function handler(event) {
@@ -90,26 +91,18 @@ async function route(event) {
     for (let i = 0; i < docs.length; i += 200) await rest.upsert('rules', docs.slice(i, i + 200))
   }
 
-  // 核對結果（dryRun 時把本次資料當作已寫入來計算）
+  // 核對結果：該銀行科目（不分公司）起算日後的分錄
   const results = []
-  const pairCache = new Map()
-  for (const [i, r] of resolved.entries()) {
-    const key = `${r.company}\u0000${r.accountCode}`
-    if (!pairCache.has(key)) {
-      const prefix = `DB|${r.company}|${r.accountCode}|`
-      const balances = (await rest.all(`rules?select=data&id=like.${enc(`"${prefix}*"`)}`)).map((x) => x.data)
-      const filter = r.company ? { company: r.company, lines: [{ accountCode: r.accountCode }] } : { lines: [{ accountCode: r.accountCode }] }
-      let entries = (await rest.all(`entries?select=data&date=gte.${ANCHOR_DATE}&data=cs.${enc(JSON.stringify(filter))}`)).map((x) => x.data)
-      if (!r.company) entries = entries.filter((e) => !e.company)
-      pairCache.set(key, { balances, entries })
+  const entryCache = new Map()
+  for (const r of resolved) {
+    if (!entryCache.has(r.accountCode)) {
+      const filter = { lines: [{ accountCode: r.accountCode }] }
+      entryCache.set(r.accountCode, (await rest.all(`entries?select=data&date=gt.${ANCHOR_DATE}&data=cs.${enc(JSON.stringify(filter))}`)).map((x) => x.data))
     }
-    const p = pairCache.get(key)
-    const doc = docs[i].data
-    p.balances = [...p.balances.filter((b) => b.id !== doc.id), doc]
     results.push({
       date: r.date, accountNo: r.accountNo, accountCode: r.accountCode, company: r.company,
       balance: r.balance, available: r.available,
-      ...checkOn(p.balances, p.entries, r.accountCode, r.date),
+      ...checkOn(OPENING_BALANCES[r.accountCode], entryCache.get(r.accountCode), r.accountCode, r.date, r.balance),
     })
   }
 

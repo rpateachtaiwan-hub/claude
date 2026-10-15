@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+
+vi.mock('./openingBalances.mjs', () => ({ ANCHOR_DATE: '2026-01-01', OPENING_BALANCES: { '1114': 1000 } }))
 import { checkOn, companyByHolderName, dominantCompany, matchAccountByNo, normalizeRow } from './bankBalance.mjs'
 import { handler } from '../functions/bank-balance.mjs'
 
@@ -43,13 +45,13 @@ describe('資料正規化與核對', () => {
       .toMatchObject({ date: '2026-10-14', accountNo: '062035010608', balance: 878803, available: 878803 })
     expect(normalizeRow({ date: 'x', accountNo: '1', balance: 1 }, 0).error).toMatch(/日期/)
   })
-  it('錨點 + 流水 vs 銀行', () => {
-    const bal = (date, balance) => ({ id: date, date, balance })
-    const ent = (date, d, c) => ({ date, lines: [{ accountCode: '1114', debit: d, credit: c }, { accountCode: '4101', debit: c, credit: d }] })
-    const entries = [ent('2026-01-01', 7, 0), ent('2026-01-05', 500, 0), ent('2026-01-06', 0, 100)]
-    expect(checkOn([bal('2026-01-01', 1000), bal('2026-01-06', 1400)], entries, '1114', '2026-01-06')).toMatchObject({ status: 'match', computed: 1400, diff: 0 })
-    expect(checkOn([bal('2026-01-01', 1000), bal('2026-01-06', 1300)], entries, '1114', '2026-01-06')).toMatchObject({ status: 'mismatch', diff: 100 })
-    expect(checkOn([], entries, '1114', '2026-01-06').status).toBe('no_anchor')
+  it('起算餘額 + 起算日後流水 vs 同日銀行', () => {
+    const ent = (date, d, c, company) => ({ date, company, lines: [{ accountCode: '1114', debit: d, credit: c }, { accountCode: '4101', debit: c, credit: d }] })
+    const entries = [ent('2026-01-01', 7, 0, 'A'), ent('2026-01-05', 500, 0, 'A'), ent('2026-01-06', 0, 100, 'B')]
+    expect(checkOn(1000, entries, '1114', '2026-01-06', 1400)).toMatchObject({ status: 'match', computed: 1400, diff: 0 })
+    expect(checkOn(1000, entries, '1114', '2026-01-06', 1300)).toMatchObject({ status: 'mismatch', diff: 100 })
+    expect(checkOn(undefined, entries, '1114', '2026-01-06', 1).status).toBe('no_anchor')
+    expect(checkOn(1000, entries, '1114', '2026-01-01', 1).status).toBe('before_anchor')
   })
 })
 
@@ -98,21 +100,17 @@ describe('bank-balance API', () => {
     expect((await call({ rows: [{}] }, 'nope')).statusCode).toBe(401)
   })
 
-  it('寫入：帳號自動對科目、公司由分錄推斷，回傳核對結果', async () => {
+  it('寫入：帳號自動對科目、公司由分錄推斷；推算 = 設定的起算餘額 + 流水（不分公司），與同日銀行比對', async () => {
     env()
-    const state = { companies: ['娛樂', '旅行社'], entries: [entry('2026-01-05', 300)], rules: [] }
+    const other = { ...entry('2026-01-06', 20), company: '旅行社' } // 公司標錯的分錄仍計入同一銀行帳戶
+    const state = { companies: ['娛樂', '旅行社'], entries: [entry('2025-12-31', 999), entry('2026-01-05', 300), entry('2026-01-05', 1), other], rules: [] }
     fakeSupabase(state)
-    let res = await call({ rows: [{ date: '2026-01-01', accountNo: '062035010608', balance: 1000 }] })
-    let out = JSON.parse(res.body)
+    const res = await call({ rows: [{ date: '2026/01/06', accountNo: '062035010608', balance: '1,250.00', available: '1,250.00' }] })
+    const out = JSON.parse(res.body)
     expect(res.statusCode).toBe(200)
-    expect(out.results[0]).toMatchObject({ accountCode: '1114', company: '娛樂', status: 'anchor' })
-    expect(state.rules[0].id).toBe('DB|娛樂|1114|2026-01-01')
-    expect(state.rules[0].data).toMatchObject({ kind: 'daily_bal', balance: 1000, source: 'rpa' })
-
-    res = await call({ rows: [{ date: '2026/01/05', accountNo: '062035010608', balance: '1,250.00', available: '1,250.00' }] })
-    out = JSON.parse(res.body)
-    expect(out.results[0]).toMatchObject({ status: 'mismatch', computed: 1300, diff: 50 })
-    expect(state.rules).toHaveLength(2)
+    expect(out.results[0]).toMatchObject({ accountCode: '1114', company: '娛樂', status: 'mismatch', computed: 1321, diff: 71 })
+    expect(state.rules[0].id).toBe('DB|娛樂|1114|2026-01-06')
+    expect(state.rules[0].data).toMatchObject({ kind: 'daily_bal', balance: 1250, available: 1250, source: 'rpa' })
   })
 
   it('dryRun 不寫入；無法對應的帳號回報錯誤但不影響其他列', async () => {
@@ -120,8 +118,8 @@ describe('bank-balance API', () => {
     const state = { companies: ['娛樂'], entries: [entry('2026-01-05', 300)], rules: [] }
     fakeSupabase(state)
     const res = await call({ dryRun: true, rows: [
-      { date: '2026-01-01', accountNo: '062035010608', balance: 1000 },
-      { date: '2026-01-01', accountNo: '031087072820', balance: 5 },
+      { date: '2026-01-05', accountNo: '062035010608', balance: 1301 },
+      { date: '2026-01-05', accountNo: '031087072820', balance: 5 },
     ] })
     const out = JSON.parse(res.body)
     expect(res.statusCode).toBe(200)

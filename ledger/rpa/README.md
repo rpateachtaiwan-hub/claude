@@ -47,10 +47,11 @@
 
 ## 3. 查哪一天
 
-- **每日排程**：每天早上（建議 08:30 以後）查**前一天**的日期 → 那天的日終餘額，不受當日交易影響。
+- **每日排程**：每天早上（建議 08:30 以後）查**前一天**的日期 → 那天的日終餘額。
   網銀註記：非營業日/非營業時間查詢，餘額可能因批次處理而變動，所以不要查「今天」。
-- **一次性補登**：從 `2026/01/01`（起算日，必查）到昨天逐日查詢。日期多時可只查有交易的日期與每月月底，
-  但 1/1 一定要有。
+- **不需要補登歷史**：2026/1/1 起算餘額由財務提供、固定在 `netlify/shared/openingBalances.mjs`，
+  系統用「起算餘額＋之後的銀行流水」算出最新餘額，只跟機器人抓的同一天餘額比對。
+  （機器人若有空檔漏跑，之後補跑那幾天即可，逐日明細會更完整，但不是必要。）
 
 ## 4. 寫入系統的 API
 
@@ -87,12 +88,13 @@ Content-Type: application/json
   "ok": true, "dryRun": false, "written": 1, "errors": [],
   "results": [
     { "date": "2026-10-14", "accountNo": "062035010608", "accountCode": "1114", "company": "娛樂",
-      "balance": 878803, "status": "mismatch", "anchorDate": "2026-01-01", "computed": 879103, "diff": 300 }
+      "balance": 878803, "status": "mismatch", "computed": 879103, "diff": 300 }
   ]
 }
 ```
 
-`status`：`match` 相符、`mismatch` 不符（`diff` = 系統推算 − 銀行）、`anchor` 起算日、`no_anchor` 尚無 1/1 餘額。
+`status`：`match` 相符、`mismatch` 不符（`diff` = 系統推算 − 銀行）、`no_anchor` 該帳戶尚未設定 1/1 起算餘額、`before_anchor` 查詢日期在起算日當天或之前。
+系統推算 = 起算餘額 + 起算日後所有分錄在該銀行科目的淨變動（不分公司欄位）。
 `errors` 有內容（如帳號對不到科目）時 `ok` 為 false，但其他列仍會寫入。
 HTTP 401 = 金鑰錯誤；501 = 伺服器未設定 `ROBOT_TOKEN` / `SUPABASE_SERVICE_ROLE_KEY`。
 
@@ -111,7 +113,7 @@ Invoke-RestMethod -Method Post -Uri 'https://<你的網址>/.netlify/functions/b
 Main.xaml
  ├─ 讀 Config（Orchestrator Asset：ApiUrl、RobotToken[Credential]、通知收件人）
  ├─ Invoke 既有登入流程
- ├─ 決定日期清單（每日=昨天；補登=起訖區間）
+ ├─ 決定日期（昨天；漏跑時可傳入補跑區間）
  ├─ For Each 帳戶 × 日期
  │    ├─ 進入「帳戶查詢 → 帳戶餘額查詢」
  │    ├─ Select Item 國別/地區=TW、歸戶號碼、帳號（依帳號文字比對選項）
@@ -127,5 +129,5 @@ Main.xaml
 穩定性要點：
 - 選擇器用欄位標籤/name 屬性錨定，不要用座標；每個步驟都等元素出現（Check App State），不要用固定 Delay。
 - 每次查詢後驗證結果表的帳號與帳務日期，對不上就重查。
-- 網銀有倒數登出計時（畫面右上「倒數時間」），長時間補登時每批之間回首頁或重新登入。
+- 網銀有倒數登出計時（畫面右上「倒數時間」），補跑多天時每批之間回首頁或重新登入。
 - 金鑰與網銀帳密只放 Orchestrator Asset/Credential，不寫在流程或 Excel。

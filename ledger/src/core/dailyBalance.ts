@@ -1,167 +1,165 @@
 // =============================================================================
-// 每日可用餘額核對：以「起算日（2026-01-01）銀行餘額」為錨點，
-// 錨點 + 其後每日銀行科目淨變動 = 系統推算餘額，逐日與銀行可用餘額比對。
-// 與「銀行對帳」（帳上自開帳起的全部累計）不同：本核對只看起算日之後的流水，
-// 不受起算日前歷史資料是否完整影響，專門驗證每天匯入的金額是否正確。
+// 每日餘額核對：起算餘額（2026-01-01 日終，財務提供、固定於 netlify/shared/openingBalances.mjs）
+// ＋ 之後每筆交易的「銀行現金腳」淨變動 = 系統推算餘額，與機器人抓回的同日銀行帳戶餘額比對。
+// 以「銀行帳戶（科目）」為單位計算，不受分錄公司欄位影響（銀行餘額只看錢有沒有進出這個帳戶）。
 // 餘額一律視為「日終餘額」（含當日交易）。純函式，方便測試。
 // =============================================================================
 
+import { ANCHOR_DATE, OPENING_BALANCES } from '../../netlify/shared/openingBalances.mjs'
 import type { Account, JournalEntry } from './types'
 
+export { ANCHOR_DATE, OPENING_BALANCES }
+
 /**
- * 是否為要核對的銀行帳戶：現金類科目中名稱含「銀行」或「存款」者。
- * 零用金、庫存現金等現金科目沒有銀行餘額可比對，不列入。
+ * 是否為要核對的銀行帳戶：匯入時當作「銀行現金腳」的科目，也就是名稱註明銀行帳號者
+ * （如「銀行存款-國泰娛樂(062-010608)」）。零用金、外幣及其他未註明帳號的存款科目不列入。
+ * 與 netlify/shared/bankBalance.mjs 的 isBankAccount 規則相同。
  */
 export function isBankAccount(a: Pick<Account, 'isCash' | 'name'>): boolean {
-  return !!a.isCash && /銀行|存款/.test(a.name) && !/零用金|庫存現金/.test(a.name)
+  return !!a.isCash && /\d{3}-\d{6}|\d{10,}/.test(a.name) && !/零用金|庫存現金|外幣|外匯/.test(a.name)
 }
 
-/** 預設起算日 */
-export const ANCHOR_DATE = '2026-01-01'
-
-/** 某公司某銀行科目某日的銀行餘額（由機器人經 bank-balance API 寫入；存 rules 表） */
+/** 某銀行科目某日的銀行餘額（由機器人經 bank-balance API 寫入；存 rules 表） */
 export interface DailyBalance {
   id: string
   /** 標記，與 rules 表其他資料區分（同表共存） */
   kind: 'daily_bal'
   date: string // YYYY-MM-DD（日終）
-  /** 公司；空字串 = 未指定公司 */
+  /** 公司（機器人寫入時推斷，僅供顯示） */
   company: string
-  /** 銀行/現金科目 code */
+  /** 銀行科目 code */
   accountCode: string
   /** 銀行帳戶餘額（整數元；核對用） */
   balance: number
   /** 網銀「可用餘額」（僅記錄；= 帳戶餘額 − 當日交換票 − 圈存 + 透支額度） */
   available?: number
-  /** 來源：機器人寫入為 'rpa'（本功能僅開放機器人寫入；早期人工輸入者不帶）*/
+  /** 來源：機器人寫入為 'rpa' */
   source?: 'rpa'
   updatedAt: string
 }
 
-/** 同一（公司, 科目, 日期）只存一筆：固定 id，重複輸入即覆寫。 */
+/** 同一（公司, 科目, 日期）只存一筆：固定 id，重複寫入即覆寫。 */
 export function dailyBalanceId(company: string, accountCode: string, date: string): string {
   return `DB|${company}|${accountCode}|${date}`
 }
 
-/** 核對對象：公司 × 銀行科目 */
-export interface BalancePair {
-  company: string
-  accountCode: string
-}
-export const pairKey = (p: BalancePair) => `${p.company}\u0000${p.accountCode}`
-
-/** 找出所有需要核對的（公司, 銀行科目）：起算日後有銀行流水者 + 已有餘額紀錄者。 */
-export function balancePairs(
+/** 要核對的銀行科目：起算日後有流水、有機器人餘額、或已設定起算餘額者。 */
+export function accountsToCheck(
   entries: JournalEntry[],
   balances: DailyBalance[],
-  cashCodes: Set<string>,
+  bankCodes: Set<string>,
+  opening: Readonly<Record<string, number>> = OPENING_BALANCES,
   anchorDate = ANCHOR_DATE,
-): BalancePair[] {
-  const map = new Map<string, BalancePair>()
-  const add = (company: string, accountCode: string) => {
-    const p = { company, accountCode }
-    map.set(pairKey(p), p)
-  }
+): string[] {
+  const set = new Set<string>()
   for (const e of entries) {
-    if (e.date < anchorDate) continue
-    for (const l of e.lines) if (cashCodes.has(l.accountCode) && l.debit !== l.credit) add(e.company ?? '', l.accountCode)
+    if (e.date <= anchorDate) continue
+    for (const l of e.lines) if (bankCodes.has(l.accountCode) && l.debit !== l.credit) set.add(l.accountCode)
   }
-  for (const b of balances) if (b.date >= anchorDate) add(b.company, b.accountCode)
-  return [...map.values()].sort((a, b) =>
-    a.company === b.company ? a.accountCode.localeCompare(b.accountCode) : a.company.localeCompare(b.company),
-  )
+  for (const b of balances) if (bankCodes.has(b.accountCode)) set.add(b.accountCode)
+  for (const c of Object.keys(opening)) if (bankCodes.has(c)) set.add(c)
+  return [...set].sort()
 }
 
-/** 該（公司, 科目）每日銀行淨變動（Σ借−Σ貸），只含 net≠0 的日期。 */
-export function dailyNet(entries: JournalEntry[], pair: BalancePair): Map<string, number> {
+/** 該銀行科目每日淨變動（Σ借−Σ貸，跨所有公司），只含 net≠0 的日期。 */
+export function dailyNet(entries: JournalEntry[], accountCode: string): Map<string, number> {
   const m = new Map<string, number>()
   for (const e of entries) {
-    if ((e.company ?? '') !== pair.company) continue
     let net = 0
-    for (const l of e.lines) if (l.accountCode === pair.accountCode) net += l.debit - l.credit
+    for (const l of e.lines) if (l.accountCode === accountCode) net += l.debit - l.credit
     if (net !== 0) m.set(e.date, (m.get(e.date) ?? 0) + net)
   }
   return m
+}
+
+/** 使用該科目最多次的公司（顯示用）。 */
+export function companyOf(entries: JournalEntry[], accountCode: string): string {
+  const count = new Map<string, number>()
+  for (const e of entries) {
+    if (!e.lines.some((l) => l.accountCode === accountCode)) continue
+    const c = e.company ?? ''
+    count.set(c, (count.get(c) ?? 0) + 1)
+  }
+  let best = '', n = 0
+  for (const [c, v] of count) if (v > n) { best = c; n = v }
+  return best
 }
 
 export interface DailyRow {
   date: string
   /** 當日系統淨變動 */
   net: number
-  /** 系統推算日終餘額 = 錨點餘額 + 錨點後至當日的累計淨變動 */
+  /** 系統推算日終餘額 = 起算餘額 + 起算日後至當日的累計淨變動 */
   computed: number
-  /** 銀行可用餘額（未輸入為 undefined） */
+  /** 機器人抓回的銀行帳戶餘額（無資料為 undefined） */
   bank?: number
-  /** 差額 = 推算 − 銀行（未輸入為 undefined） */
+  /** 差額 = 推算 − 銀行 */
   diff?: number
-  /**
-   * 差額自上一個「有輸入銀行餘額的日期」以來的變化；≠0 表示問題就發生在
-   * （上一個核對日, 本日] 之間——漏匯、重複或金額錯誤。
-   */
+  /** 差額自上一個有銀行餘額的日期以來的變化；≠0 表示問題發生在（上一個核對日, 本日] 之間 */
   newDiff?: number
 }
 
 export interface DailyCheck {
-  pair: BalancePair
-  /** 錨點：起算日當天的餘額紀錄；若起算日未填，取起算日之後最早的一筆 */
-  anchor?: DailyBalance
-  /** 錨點是否正好在起算日 */
-  anchorOnDate: boolean
-  /**
-   * 帳上餘額（自開帳累計至錨點日，含當日）。應等於錨點的銀行餘額；
-   * 不等代表起算日前的歷史資料或期初餘額有誤（資產負債表的銀行存款會錯，但每日核對看不出來）。
-   */
+  accountCode: string
+  /** 起算餘額（未設定為 undefined） */
+  opening?: number
+  /** 帳上餘額（自開帳累計至起算日，含當日）；應等於起算餘額 */
   bookAtAnchor?: number
-  /** 帳上餘額 − 錨點銀行餘額 */
+  /** 帳上起算餘額 − 起算餘額；≠0 代表起算日前歷史資料或期初有誤 */
   anchorDiff?: number
-  /** 自錨點（不含）起至 upTo 的逐日列：有流水或有銀行餘額的日期都列出，依日期遞增 */
+  /** 起算日後至 upTo 的逐日列（有流水或有銀行餘額的日期），依日期遞增 */
   rows: DailyRow[]
-  /** 最近一個有銀行餘額的核對列 */
+  /** 最新一個有銀行餘額的日期（主比對：系統推算 vs 銀行，同一天） */
   latest?: DailyRow
   /** 第一個出現新差異的日期 */
   firstBreak?: string
-  /** 有新差異的日數 */
   breakCount: number
-  /** 有流水但未輸入銀行餘額的日數 */
-  missingCount: number
 }
 
-/** 逐日核對單一（公司, 科目）。 */
+/** 銀行餘額依日期（同日多筆取最後更新者）。 */
+function bankByDate(balances: DailyBalance[], accountCode: string): Map<string, number> {
+  const pick = new Map<string, DailyBalance>()
+  for (const b of balances) {
+    if (b.accountCode !== accountCode) continue
+    const cur = pick.get(b.date)
+    if (!cur || b.updatedAt > cur.updatedAt) pick.set(b.date, b)
+  }
+  return new Map([...pick].map(([d, b]) => [d, b.balance]))
+}
+
+/** 核對單一銀行科目。 */
 export function dailyCheck(
   entries: JournalEntry[],
   balances: DailyBalance[],
-  pair: BalancePair,
+  accountCode: string,
   upTo: string,
+  opening: Readonly<Record<string, number>> = OPENING_BALANCES,
   anchorDate = ANCHOR_DATE,
 ): DailyCheck {
-  const mine = balances
-    .filter((b) => b.company === pair.company && b.accountCode === pair.accountCode && b.date >= anchorDate)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-  const anchor = mine[0]
-  const base: DailyCheck = { pair, anchor, anchorOnDate: anchor?.date === anchorDate, rows: [], breakCount: 0, missingCount: 0 }
-  if (!anchor) return base
+  const base: DailyCheck = { accountCode, opening: opening[accountCode], rows: [], breakCount: 0 }
+  if (base.opening === undefined) return base
 
-  const net = dailyNet(entries, pair)
+  const net = dailyNet(entries, accountCode)
   let book = 0
-  for (const [d, n] of net) if (d <= anchor.date) book += n
+  for (const [d, n] of net) if (d <= anchorDate) book += n
   base.bookAtAnchor = book
-  base.anchorDiff = book - anchor.balance
-  const bankByDate = new Map(mine.map((b) => [b.date, b.balance]))
-  const dates = new Set<string>()
-  for (const d of net.keys()) if (d > anchor.date && d <= upTo) dates.add(d)
-  for (const d of bankByDate.keys()) if (d > anchor.date && d <= upTo) dates.add(d)
+  base.anchorDiff = book - base.opening
 
-  let run = anchor.balance
+  const bank = bankByDate(balances, accountCode)
+  const dates = new Set<string>()
+  for (const d of net.keys()) if (d > anchorDate && d <= upTo) dates.add(d)
+  for (const d of bank.keys()) if (d > anchorDate && d <= upTo) dates.add(d)
+
+  let run = base.opening
   let prevDiff = 0
-  const rows: DailyRow[] = []
   for (const date of [...dates].sort()) {
     const n = net.get(date) ?? 0
     run += n
     const row: DailyRow = { date, net: n, computed: run }
-    const bank = bankByDate.get(date)
-    if (bank !== undefined) {
-      row.bank = bank
-      row.diff = run - bank
+    const b = bank.get(date)
+    if (b !== undefined) {
+      row.bank = b
+      row.diff = run - b
       row.newDiff = row.diff - prevDiff
       prevDiff = row.diff
       if (row.newDiff !== 0) {
@@ -169,11 +167,8 @@ export function dailyCheck(
         if (!base.firstBreak) base.firstBreak = date
       }
       base.latest = row
-    } else {
-      base.missingCount++
     }
-    rows.push(row)
+    base.rows.push(row)
   }
-  base.rows = rows
   return base
 }
