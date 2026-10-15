@@ -103,7 +103,7 @@ export default function DailyBalance() {
     if (anchor) rows.push([anchor.date, '', anchor.balance, anchor.balance, 0, '起算'])
     for (const r of selCheck.rows) rows.push([r.date, r.net, r.computed, r.bank ?? '', r.diff ?? '', r.newDiff ? r.newDiff : ''])
     downloadCSV(`每日餘額核對_${coLabel(pair.company)}_${accName(pair.accountCode)}`,
-      toCSV(['日期', '當日淨變動', '系統推算餘額', '銀行可用餘額', '差額(推算−銀行)', '新增差異'], rows))
+      toCSV(['日期', '當日淨變動', '系統推算餘額', '銀行帳戶餘額', '差額(推算−銀行)', '新增差異'], rows))
   }
 
   // ── 批次匯入 ──────────────────────────────────────────────────────────────
@@ -140,9 +140,10 @@ export default function DailyBalance() {
     <div className="space-y-4">
       <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
         以 <b>{ANCHOR_DATE.replace(/-/g, '/')} 的銀行餘額為起點</b>，加上之後每天匯入的銀行流水，推算各公司、各銀行帳戶的每日日終餘額，
-        再與當天輸入的<b>銀行可用餘額</b>比對。差額<b>「新增」</b>的那一天，就是那段期間的匯入有漏、重複或金額錯誤。
+        再與當天的<b>銀行帳戶餘額</b>比對。差額<b>「新增」</b>的那一天，就是那段期間的匯入有漏、重複或金額錯誤。
         不受起算日之前的歷史資料影響。餘額請填<b>當日日終</b>數字（例如隔天早上看到的前一日餘額）。
-        <br />※ 若銀行「可用餘額」含圈存、未兌現票據等，會與帳面餘額有落差，請以帳面/存款餘額為準或在備註留意。
+        <br />※ 核對用的是網銀的<b>「帳戶餘額」</b>：「可用餘額」＝帳戶餘額 − 當日交換票 − 圈存 ＋ 透支額度，有圈存或透支時會與流水推算不同。
+        標 <span className="text-[10px] px-1 rounded bg-violet-100 text-violet-700">RPA</span> 者為機器人自動填入。
       </div>
 
       {msg && <div className={`text-sm rounded-lg px-3 py-2 border ${msg.startsWith('✗') ? 'text-red-700 bg-red-50 border-red-200' : 'text-green-700 bg-green-50 border-green-200'}`}>{msg}</div>}
@@ -168,7 +169,7 @@ export default function DailyBalance() {
             <thead><tr className="bg-gray-50 text-gray-500 text-xs">
               <th className="px-3 py-2 text-left">公司</th><th className="px-3 py-2 text-left">銀行科目</th>
               <th className="px-3 py-2 text-right">當日淨變動</th><th className="px-3 py-2 text-right">系統推算餘額</th>
-              <th className="px-3 py-2 text-right w-44">銀行可用餘額</th><th className="px-3 py-2 text-right">差額</th>
+              <th className="px-3 py-2 text-right w-44">銀行帳戶餘額</th><th className="px-3 py-2 text-right">差額</th>
             </tr></thead>
             <tbody>
               {pairs.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">尚無銀行流水，請在下方加入要核對的公司與銀行科目。</td></tr>}
@@ -180,6 +181,7 @@ export default function DailyBalance() {
                 const computed = isAnchorDay ? undefined : computedBalanceOn(net, anchorForDay, date)
                 const v = parseAmount(inputs[k] ?? '')
                 const diff = computed !== undefined && v !== null ? computed - v : null
+                const ex = existingOn(p, date)
                 return (
                   <tr key={k} className="border-t border-gray-100">
                     <td className="px-3 py-1.5 text-gray-700">{coLabel(p.company)}</td>
@@ -193,6 +195,12 @@ export default function DailyBalance() {
                       <input value={inputs[k] ?? ''} onChange={(e) => setInputs((s) => ({ ...s, [k]: e.target.value }))}
                         onKeyDown={(e) => { if (e.key === 'Enter') saveDay() }}
                         inputMode="numeric" placeholder="銀行 App 餘額" className={`${inp} text-right tabular-nums`} />
+                      {ex && (ex.source === 'rpa' || (ex.available !== undefined && ex.available !== ex.balance)) && (
+                        <div className="text-[11px] text-gray-500 text-right mt-0.5">
+                          {ex.source === 'rpa' && <span className="px-1 rounded bg-violet-100 text-violet-700 mr-1">RPA</span>}
+                          {ex.available !== undefined && ex.available !== ex.balance && <>可用 {formatTWD(ex.available)}</>}
+                        </div>
+                      )}
                     </td>
                     <td className={`px-3 py-1.5 text-right tabular-nums ${diff === null ? 'text-gray-300' : diff === 0 ? 'text-green-600' : 'text-red-600 font-medium'}`}>
                       {diff === null ? '—' : diff === 0 ? '✓' : formatTWD(diff)}
@@ -304,7 +312,7 @@ export default function DailyBalance() {
             <table className="w-full min-w-[640px] text-sm">
               <thead className="sticky top-0"><tr className="bg-gray-50 text-gray-500 text-xs">
                 <th className="px-3 py-2 text-left">日期</th><th className="px-3 py-2 text-right">當日淨變動</th>
-                <th className="px-3 py-2 text-right">系統推算餘額</th><th className="px-3 py-2 text-right">銀行可用餘額</th>
+                <th className="px-3 py-2 text-right">系統推算餘額</th><th className="px-3 py-2 text-right">銀行帳戶餘額</th>
                 <th className="px-3 py-2 text-right">差額</th><th className="px-3 py-2 text-right">新增差異</th>
               </tr></thead>
               <tbody>

@@ -21,8 +21,12 @@ export interface DailyBalance {
   company: string
   /** 銀行/現金科目 code */
   accountCode: string
-  /** 銀行可用餘額（整數元） */
+  /** 銀行帳戶餘額（整數元；核對用） */
   balance: number
+  /** 網銀「可用餘額」（僅記錄；= 帳戶餘額 − 當日交換票 − 圈存 + 透支額度） */
+  available?: number
+  /** 來源：機器人寫入為 'rpa'；人工輸入不帶 */
+  source?: 'rpa'
   updatedAt: string
 }
 

@@ -25,6 +25,8 @@
    GEMINI_API_KEY          = <你的 Gemini 金鑰>   # 僅伺服器端，不會外洩
    ```
 4. Deploy。之後每次 push 會自動重新部署。
+5.（選用）銀行餘額機器人：再新增 `ROBOT_TOKEN = <自訂一長串隨機字串>`（需已設 `SUPABASE_SERVICE_ROLE_KEY`），
+   機器人以此呼叫 `/.netlify/functions/bank-balance` 寫入每日餘額。規格見 `ledger/rpa/README.md`。
 
 ## 3. 驗證
 - 打開網址 → 應出現**登入頁**（代表已連 Supabase）。用第 1 步建立的帳號登入。
