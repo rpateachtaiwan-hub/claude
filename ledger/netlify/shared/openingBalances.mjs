@@ -15,8 +15,8 @@ export const CASH_ACCOUNT_CODE = '112' // 112 銀行現金
 export const BANK_ACCOUNTS = {
   '062035010608': { company: '路特娛樂', opening: 995500 },
   '031035006012': { company: '路特旅行社', opening: 1567028 },
-  '062035011850': { company: '餐飲', opening: 0 }, // 2026-01-23 成立，之前為 0
+  '062035011850': { company: '路特國際餐飲', opening: 0 }, // 2026-01-23 成立，之前為 0
   '031035007663': { company: '路特租車', opening: 42794 },
-  '115035006712': { company: '路特貿易', opening: 202882 },
+  '115035006712': { company: '路特國際貿易', opening: 202882 },
   '001035016976': { company: '路特菸酒', opening: 1528629 },
 }
