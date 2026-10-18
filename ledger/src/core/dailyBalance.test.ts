@@ -68,7 +68,7 @@ describe('公司名稱對照', () => {
   })
 
   it('bankAccountChecks：每個設定帳號一列，公司對照系統清單', () => {
-    const list = bankAccountChecks(['路特娛樂', '路特旅行社', '路特租車', '路特貿易', '路特菸酒', '路特國際餐飲'])
+    const list = bankAccountChecks(['路特國際貿易', '路特國際餐飲', '路特娛樂', '路特旅行社', '路特租車', '路特菸酒'])
     expect(list).toHaveLength(6)
     expect(list.every((c) => c.company !== null)).toBe(true)
     const yl = list.find((c) => c.accountNo === '062035010608')!
