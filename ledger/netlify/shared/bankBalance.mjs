@@ -1,69 +1,29 @@
 // =============================================================================
 // 銀行餘額機器人 API 的純邏輯（無 I/O，供 netlify/functions/bank-balance.mjs 使用並可單元測試）。
-// 與前端 src/core/dailyBalance.ts 共用相同規則：id = DB|公司|科目|日期、餘額為日終、
-// 推算餘額 = 起算日(含)後最早一筆餘額為錨點 + 錨點後至當日的銀行科目淨變動。
+// 與前端 src/core/dailyBalance.ts 共用相同規則：
+//   每家公司各有一個台幣帳戶，各自對該公司的 112 銀行現金——
+//   系統餘額 = 該公司 2026-01-01 期初餘額（openingBalances.mjs）
+//            + 1/1 之後（不含 1/1）至當日、該公司分錄中 112 的（借 − 貸），
+//   與同日該公司台幣帳戶的網銀「帳戶餘額」比對。id = DB|公司|科目|日期、餘額為日終。
 // =============================================================================
 
-import { ANCHOR_DATE, OPENING_BALANCES } from './openingBalances.mjs'
+import { ANCHOR_DATE, BANK_ACCOUNTS, CASH_ACCOUNT_CODE } from './openingBalances.mjs'
 
-export { ANCHOR_DATE, OPENING_BALANCES }
+export { ANCHOR_DATE, BANK_ACCOUNTS, CASH_ACCOUNT_CODE }
 
 export const dailyBalanceId = (company, accountCode, date) => `DB|${company}|${accountCode}|${date}`
 
 const digits = (s) => String(s ?? '').replace(/\D/g, '')
 
 /**
- * 是否為要核對的銀行帳戶（與前端 isBankAccount 相同）：匯入時的「銀行現金腳」科目，即名稱註明銀行帳號者。
- * 零用金、外幣及其他未註明帳號的存款科目不列入。
+ * 把設定檔的公司名稱對到系統 companies 表的實際名稱：
+ * 完全相同優先；否則容忍前綴差異（「娛樂」↔「路特娛樂」），唯一命中才回傳，對不到回 null。
  */
-export const isBankAccount = (a) =>
-  !!a?.isCash && /\d{3}-\d{6}|\d{10,}/.test(a.name ?? '') && !/零用金|庫存現金|外幣|外匯/.test(a.name ?? '')
-
-/**
- * 以銀行帳號找系統的銀行科目：比對科目名稱括號內的帳號。
- * 支援完整帳號（001035016976）與國泰簡寫「分行3碼-末6碼」（062-010608 ↔ 062035010608）。
- * 回傳 { code } 或 { error }。
- */
-export function matchAccountByNo(accounts, accountNo) {
-  const no = digits(accountNo)
-  if (no.length < 6) return { error: `帳號「${accountNo}」格式不正確` }
-  const hits = []
-  for (const a of accounts) {
-    if (!isBankAccount(a)) continue
-    const groups = String(a.name ?? '').match(/\d[\d-]{4,}\d/g) ?? []
-    const ok = groups.some((g) => {
-      const parts = g.split('-')
-      if (parts.length === 2 && parts[0].length === 3 && parts[1].length === 6) {
-        return no.length >= 9 && no.startsWith(parts[0]) && no.endsWith(parts[1])
-      }
-      return digits(g) === no
-    })
-    if (ok) hits.push(a.code)
-  }
-  if (hits.length === 1) return { code: hits[0] }
-  if (hits.length === 0) return { error: `找不到帳號 ${accountNo} 對應的銀行科目（請在科目名稱括號內註明帳號）` }
-  return { error: `帳號 ${accountNo} 對到多個科目：${hits.join('、')}` }
-}
-
-/** 由分錄推斷某銀行科目屬於哪家公司：取使用該科目最多次的公司。 */
-export function dominantCompany(companiesOfEntries) {
-  const count = new Map()
-  for (const c of companiesOfEntries) {
-    const k = c ?? ''
-    count.set(k, (count.get(k) ?? 0) + 1)
-  }
-  let best = null, n = 0
-  for (const [k, v] of count) if (v > n) { best = k; n = v }
-  return best
-}
-
-/** 以戶名比對公司清單（如「路特娛樂有限公司」↔「娛樂」或「路特娛樂」）；唯一命中才回傳。 */
-export function companyByHolderName(companies, holderName) {
-  const h = String(holderName ?? '').trim()
-  if (!h) return null
-  const exact = companies.find((c) => c === h)
-  if (exact) return exact
-  const hits = companies.filter((c) => c && (h.includes(c) || c.includes(h)))
+export function resolveCompany(name, companies) {
+  const n = String(name ?? '').trim()
+  if (!n) return null
+  if (companies.includes(n)) return n
+  const hits = companies.filter((c) => c && (c.includes(n) || n.includes(c)))
   return hits.length === 1 ? hits[0] : null
 }
 
@@ -95,19 +55,12 @@ export function normalizeRow(r, i) {
   if (balance === null) return { error: `${at}：帳戶餘額「${r?.balance}」不是數字` }
   const available = r?.available === undefined || r?.available === '' ? undefined : toAmount(r.available)
   if (available === null) return { error: `${at}：可用餘額「${r?.available}」不是數字` }
-  if (!r?.accountNo && !r?.accountCode) return { error: `${at}：缺少帳號 accountNo` }
-  return {
-    row: {
-      date, balance, available,
-      accountNo: r.accountNo ? digits(r.accountNo) : undefined,
-      accountCode: r.accountCode ? String(r.accountCode) : undefined,
-      company: typeof r.company === 'string' ? r.company : undefined,
-      holderName: r.holderName ? String(r.holderName) : undefined,
-    },
-  }
+  const accountNo = digits(r?.accountNo)
+  if (!accountNo) return { error: `${at}：缺少帳號 accountNo` }
+  return { row: { date, balance, available, accountNo } }
 }
 
-/** 某分錄對某銀行科目的淨變動（借 − 貸）。 */
+/** 某分錄對某科目的淨變動（借 − 貸）。 */
 export function netOf(entry, accountCode) {
   let n = 0
   for (const l of entry?.lines ?? []) if (l.accountCode === accountCode) n += (l.debit || 0) - (l.credit || 0)
@@ -116,7 +69,8 @@ export function netOf(entry, accountCode) {
 
 /**
  * 推算某日日終餘額並與同日銀行餘額比對：
- * 推算 = 起算餘額（openingBalances.mjs）+ 起算日後至當日所有分錄在該銀行科目的淨變動（不分公司）。
+ * 推算 = 該公司期初餘額 + 起算日後（不含）至當日（含）分錄在 112 的淨變動。
+ * entries 須先由呼叫端過濾為「該公司」的分錄。
  */
 export function checkOn(opening, entries, accountCode, date, bank, anchorDate = ANCHOR_DATE) {
   if (opening === undefined) return { status: 'no_anchor' }

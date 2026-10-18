@@ -4,21 +4,22 @@
 //   Header：Authorization: Bearer <Supabase access token>
 //           （機器人用 Supabase 帳號登入 /auth/v1/token?grant_type=password 取得，與交易明細上傳同一帳號）
 //   Body：{ "dryRun": false, "rows": [ { "date": "2026-10-14", "accountNo": "062035010608",
-//           "holderName": "路特娛樂有限公司", "balance": 878803, "available": 878803 } ] }
-//   - accountNo 會自動對應到科目名稱括號內註明帳號的銀行科目（如「銀行存款-國泰娛樂(062-010608)」）
-//   - 公司自動推斷（該科目分錄最常出現的公司；無分錄時以戶名比對）；也可直接給 company / accountCode
+//           "balance": 878803, "available": 878803 } ] }
+//   - accountNo 以 netlify/shared/openingBalances.mjs 的 BANK_ACCOUNTS 對應公司（每家公司一個台幣帳戶），
+//     科目固定為 112 銀行現金；不在清單內的帳號回報「未設定對應公司」錯誤
 //   - balance = 網銀「帳戶餘額」（用於核對）；available = 「可用餘額」（僅記錄）
 //   - dryRun: true 只檢查對應與核對結果，不寫入
 // 回應：{ ok, written, results: [{ date, accountNo, accountCode, company, balance, status, computed, diff }], errors }
-//   status：match 相符 / mismatch 不符 / no_anchor 尚未設定起算餘額（netlify/shared/openingBalances.mjs）/ before_anchor 起算日當天或之前
-//   推算 = 起算餘額 + 起算日後所有分錄在該銀行科目的淨變動（不分公司），與同日銀行帳戶餘額比對
+//   status：match 相符 / mismatch 不符 / before_anchor 起算日當天或之前
+//   推算 = 該公司 2026-01-01 期初餘額 + 1/1 之後（不含）至當日「該公司」分錄中 112 的（借 − 貸），
+//   與同日該公司台幣帳戶的網銀餘額比對
 //
 // 金鑰：SUPABASE_SERVICE_ROLE_KEY 只存在伺服器端環境變數。
 // 機器人帳號白名單：ROBOT_EMAILS（Netlify 環境變數，逗號分隔；預設 rpateachtaiwan@gmail.com）。
 // 401 = 憑證無效/過期；403 = 登入者不在 ROBOT_EMAILS；501 = 未設定 SUPABASE_SERVICE_ROLE_KEY。
 
 import {
-  ANCHOR_DATE, OPENING_BALANCES, checkOn, companyByHolderName, dailyBalanceId, dominantCompany, isBankAccount, matchAccountByNo, normalizeRow,
+  ANCHOR_DATE, BANK_ACCOUNTS, CASH_ACCOUNT_CODE, checkOn, dailyBalanceId, normalizeRow, resolveCompany,
 } from '../shared/bankBalance.mjs'
 
 export async function handler(event) {
@@ -52,35 +53,22 @@ async function route(event) {
 
   const rest = makeRest(url, serviceKey)
   const accounts = (await rest.all('accounts?select=data')).map((r) => r.data)
+  if (!accounts.some((a) => a.code === CASH_ACCOUNT_CODE)) {
+    return json(500, { error: `科目表中找不到代號 ${CASH_ACCOUNT_CODE}（銀行現金）科目，無法核對` })
+  }
   const companies = (await rest.all('companies?select=name')).map((r) => r.name)
 
   const errors = []
   const resolved = []
-  const companyCache = new Map()
   for (const [i, raw] of body.rows.entries()) {
     const n = normalizeRow(raw, i)
     if (n.error) { errors.push(n.error); continue }
     const r = n.row
-    let code = r.accountCode
-    if (code) {
-      if (!accounts.some((a) => a.code === code && isBankAccount(a))) { errors.push(`第 ${i + 1} 筆：科目 ${code} 不是銀行存款科目`); continue }
-    } else {
-      const m = matchAccountByNo(accounts, r.accountNo)
-      if (m.error) { errors.push(`第 ${i + 1} 筆：${m.error}`); continue }
-      code = m.code
-    }
-    let company = r.company
-    if (company === undefined) {
-      if (!companyCache.has(code)) {
-        const used = await rest.all(`entries?select=company:data->>company&order=date.desc&data=cs.${enc(JSON.stringify({ lines: [{ accountCode: code }] }))}`, 500)
-        companyCache.set(code, used.length ? dominantCompany(used.map((u) => u.company)) : null)
-      }
-      company = companyCache.get(code) ?? companyByHolderName(companies, r.holderName) ?? undefined
-      if (company === undefined) { errors.push(`第 ${i + 1} 筆：無法判斷帳號 ${r.accountNo ?? code} 屬於哪家公司，請在 company 欄指定`); continue }
-    } else if (company && !companies.includes(company)) {
-      errors.push(`第 ${i + 1} 筆：公司「${company}」不存在`); continue
-    }
-    resolved.push({ ...r, accountCode: code, company })
+    const cfg = BANK_ACCOUNTS[r.accountNo]
+    if (!cfg) { errors.push(`第 ${i + 1} 筆：帳號 ${r.accountNo} 未設定對應公司（請在 openingBalances.mjs 的 BANK_ACCOUNTS 設定）`); continue }
+    const company = resolveCompany(cfg.company, companies)
+    if (!company) { errors.push(`第 ${i + 1} 筆：設定的公司「${cfg.company}」對不到系統公司清單（現有：${companies.join('、') || '無'}）`); continue }
+    resolved.push({ ...r, accountCode: CASH_ACCOUNT_CODE, company, opening: cfg.opening })
   }
 
   const now = new Date().toISOString()
@@ -97,18 +85,18 @@ async function route(event) {
     for (let i = 0; i < docs.length; i += 200) await rest.upsert('rules', docs.slice(i, i + 200))
   }
 
-  // 核對結果：該銀行科目（不分公司）起算日後的分錄
+  // 核對結果：該公司起算日後、碰到 112 的分錄
   const results = []
   const entryCache = new Map()
   for (const r of resolved) {
-    if (!entryCache.has(r.accountCode)) {
-      const filter = { lines: [{ accountCode: r.accountCode }] }
-      entryCache.set(r.accountCode, (await rest.all(`entries?select=data&date=gt.${ANCHOR_DATE}&data=cs.${enc(JSON.stringify(filter))}`)).map((x) => x.data))
+    if (!entryCache.has(r.company)) {
+      const filter = { company: r.company, lines: [{ accountCode: CASH_ACCOUNT_CODE }] }
+      entryCache.set(r.company, (await rest.all(`entries?select=data&date=gt.${ANCHOR_DATE}&data=cs.${enc(JSON.stringify(filter))}`)).map((x) => x.data))
     }
     results.push({
       date: r.date, accountNo: r.accountNo, accountCode: r.accountCode, company: r.company,
       balance: r.balance, available: r.available,
-      ...checkOn(OPENING_BALANCES[r.accountCode], entryCache.get(r.accountCode), r.accountCode, r.date, r.balance),
+      ...checkOn(r.opening, entryCache.get(r.company), CASH_ACCOUNT_CODE, r.date, r.balance),
     })
   }
 
