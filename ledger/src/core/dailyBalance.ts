@@ -96,10 +96,12 @@ export interface DailyRow {
 export interface DailyCheck {
   company: string
   opening: number
-  /** 帳上餘額（該公司 112 自開帳累計至起算日，含當日）；應等於期初餘額 */
+  /** 帳上餘額（該公司 112 自開帳累計至起算日，含當日）。本系統期初不入帳，正常為 0 */
   bookAtAnchor: number
-  /** 帳上起算餘額 − 期初餘額；≠0 代表起算日（含）前的歷史資料或期初有誤 */
+  /** 帳上起算餘額 − 期初餘額 */
   anchorDiff: number
+  /** 起算日（含）前碰到 112 的分錄筆數；>0 時畫面提示確認日期是否正確 */
+  anchorEntries: number
   /** 起算日後至 upTo 的逐日列（有流水或有銀行餘額的日期），依日期遞增 */
   rows: DailyRow[]
   /** 最新一個有銀行餘額的日期（主比對：系統推算 vs 銀行，同一天） */
@@ -132,7 +134,12 @@ export function dailyCheck(
   const net = dailyNet(entries, company)
   let book = 0
   for (const [d, n] of net) if (d <= anchorDate) book += n
-  const base: DailyCheck = { company, opening, bookAtAnchor: book, anchorDiff: book - opening, rows: [], breakCount: 0 }
+  let anchorEntries = 0
+  for (const e of entries) {
+    if (e.company !== company || e.date > anchorDate) continue
+    if (e.lines.some((l) => l.accountCode === CASH_ACCOUNT_CODE && l.debit !== l.credit)) anchorEntries++
+  }
+  const base: DailyCheck = { company, opening, bookAtAnchor: book, anchorDiff: book - opening, anchorEntries, rows: [], breakCount: 0 }
 
   const bank = bankByDate(balances, company)
   const dates = new Set<string>()

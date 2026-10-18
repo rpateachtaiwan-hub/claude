@@ -104,10 +104,12 @@ export default function DailyBalance() {
                   <td className="px-3 py-2 text-gray-600">{cfg.accountNo}</td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {formatTWD(c.opening)}
-                    <div className={`text-[11px] ${c.anchorDiff === 0 ? 'text-green-600' : 'text-red-600'}`}
-                      title="該公司 112 自開帳累計到起算日的帳上餘額是否等於期初餘額；不符代表起算日前的歷史資料或期初有誤，資產負債表的銀行現金會不正確">
-                      {c.anchorDiff === 0 ? '✓ 帳上相符' : `✗ 帳上 ${formatTWD(c.bookAtAnchor)}`}
-                    </div>
+                    {c.anchorEntries > 0 && (
+                      <div className="text-[11px] text-amber-700"
+                        title="本系統期初不入帳，1/1（含）以前正常不該有分錄；這些分錄不會計入每日核對（1/1 當天的交易已包含在期初餘額內），但若其中有日期標錯的交易，會從核對中漏掉，請到明細確認日期是否正確">
+                        ⚠ 1/1 前有 {c.anchorEntries} 筆分錄（112 淨額 {formatTWD(c.bookAtAnchor)}）
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{c.latest?.date ?? '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{c.latest ? formatTWD(c.latest.computed) : '—'}</td>

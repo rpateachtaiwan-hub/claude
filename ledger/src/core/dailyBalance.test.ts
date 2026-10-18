@@ -49,12 +49,14 @@ describe('每日餘額核對（依公司、固定 112）', () => {
     expect(c.latest?.diff).toBe(0)
   })
 
-  it('帳上起算餘額（該公司 112 自開帳累計，含起算日當天）vs 期初餘額', () => {
+  it('帳上起算餘額（該公司 112 自開帳累計，含起算日當天）與 1/1 前分錄筆數', () => {
     const ok = dailyCheck([inflow('2025-06-01', 99_000), inflow('2026-01-01', 1_000)], [], '路特菸酒', OPEN, '2026-12-31')
     expect(ok.bookAtAnchor).toBe(100_000)
     expect(ok.anchorDiff).toBe(0)
-    const bad = dailyCheck([inflow('2026-01-01', 1_000)], [], '路特菸酒', OPEN, '2026-12-31')
-    expect(bad.anchorDiff).toBe(-99_000)
+    expect(ok.anchorEntries).toBe(2)
+    const clean = dailyCheck([inflow('2026-01-05', 1_000)], [], '路特菸酒', OPEN, '2026-12-31')
+    expect(clean.anchorEntries).toBe(0) // 期初不入帳的正常狀態：1/1（含）前無分錄
+    expect(clean.bookAtAnchor).toBe(0)
   })
 })
 
