@@ -1,7 +1,8 @@
 // Netlify serverless：銀行餘額機器人 API（UiPath 等 RPA 每日抓到網銀餘額後呼叫，直接寫入「每日餘額核對」）。
 //
 // POST /.netlify/functions/bank-balance
-//   Header：Authorization: Bearer <ROBOT_TOKEN>（Netlify 環境變數，僅給機器人；與使用者登入無關）
+//   Header：Authorization: Bearer <Supabase access token>
+//           （機器人用 Supabase 帳號登入 /auth/v1/token?grant_type=password 取得，與交易明細上傳同一帳號）
 //   Body：{ "dryRun": false, "rows": [ { "date": "2026-10-14", "accountNo": "062035010608",
 //           "holderName": "路特娛樂有限公司", "balance": 878803, "available": 878803 } ] }
 //   - accountNo 會自動對應到科目名稱括號內註明帳號的銀行科目（如「銀行存款-國泰娛樂(062-010608)」）
@@ -12,9 +13,10 @@
 //   status：match 相符 / mismatch 不符 / no_anchor 尚未設定起算餘額（netlify/shared/openingBalances.mjs）/ before_anchor 起算日當天或之前
 //   推算 = 起算餘額 + 起算日後所有分錄在該銀行科目的淨變動（不分公司），與同日銀行帳戶餘額比對
 //
-// 金鑰：SUPABASE_SERVICE_ROLE_KEY 與 ROBOT_TOKEN 只存在伺服器端環境變數。
+// 金鑰：SUPABASE_SERVICE_ROLE_KEY 只存在伺服器端環境變數。
+// 機器人帳號白名單：ROBOT_EMAILS（Netlify 環境變數，逗號分隔；預設 rpateachtaiwan@gmail.com）。
+// 401 = 憑證無效/過期；403 = 登入者不在 ROBOT_EMAILS；501 = 未設定 SUPABASE_SERVICE_ROLE_KEY。
 
-import { timingSafeEqual } from 'node:crypto'
 import {
   ANCHOR_DATE, OPENING_BALANCES, checkOn, companyByHolderName, dailyBalanceId, dominantCompany, isBankAccount, matchAccountByNo, normalizeRow,
 } from '../shared/bankBalance.mjs'
@@ -32,11 +34,15 @@ async function route(event) {
 
   const url = clean(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)
   const serviceKey = clean(process.env.SUPABASE_SERVICE_ROLE_KEY)
-  const robotToken = clean(process.env.ROBOT_TOKEN)
-  if (!url || !serviceKey || !robotToken) return json(501, { error: 'NOT_CONFIGURED：需設定 SUPABASE_SERVICE_ROLE_KEY 與 ROBOT_TOKEN' })
+  if (!url || !serviceKey) return json(501, { error: 'NOT_CONFIGURED：需設定 SUPABASE_SERVICE_ROLE_KEY' })
 
   const token = (event.headers.authorization || event.headers.Authorization || '').replace(/^Bearer\s+/i, '')
-  if (!safeEqual(token, robotToken)) return json(401, { error: '機器人金鑰錯誤' })
+  if (!token) return json(401, { error: '未登入' })
+  const meRes = await fetch(`${url.replace(/\/+$/, '')}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: `Bearer ${token}` } })
+  if (!meRes.ok) return json(401, { error: '登入已失效或憑證錯誤' })
+  const caller = await meRes.json()
+  const robotEmails = clean(process.env.ROBOT_EMAILS || 'rpateachtaiwan@gmail.com').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+  if (!robotEmails.includes(String(caller?.email || '').toLowerCase())) return json(403, { error: '此帳號不是機器人帳號' })
 
   let body
   try { body = JSON.parse(event.body || '{}') } catch { return json(400, { error: 'bad json' }) }
@@ -137,10 +143,6 @@ function makeRest(url, key) {
   }
 }
 
-function safeEqual(a, b) {
-  const x = Buffer.from(String(a)), y = Buffer.from(String(b))
-  return x.length === y.length && timingSafeEqual(x, y)
-}
 const enc = (s) => encodeURIComponent(s)
 const clean = (s) => (s ? String(s).trim() : '')
 function json(statusCode, body) {

@@ -57,7 +57,7 @@
 
 ```
 POST https://<你的 Netlify 網址>/.netlify/functions/bank-balance
-Authorization: Bearer <ROBOT_TOKEN>
+Authorization: Bearer <Supabase access token>
 Content-Type: application/json
 
 {
@@ -81,6 +81,11 @@ Content-Type: application/json
 
 一次最多 500 筆；同一帳戶同一天重送會覆寫，可放心重跑。
 
+**驗證方式**：機器人用自己的 Supabase 帳號（與交易明細上傳同一個）登入
+`POST https://<專案代號>.supabase.co/auth/v1/token?grant_type=password` 取得 `access_token`，
+再放進 `Authorization: Bearer <access_token>` 呼叫本 API。
+允許的機器人帳號列在 Netlify 環境變數 `ROBOT_EMAILS`（逗號分隔，預設 `rpateachtaiwan@gmail.com`）。
+
 回應：
 
 ```json
@@ -96,14 +101,21 @@ Content-Type: application/json
 `status`：`match` 相符、`mismatch` 不符（`diff` = 系統推算 − 銀行）、`no_anchor` 該帳戶尚未設定 1/1 起算餘額、`before_anchor` 查詢日期在起算日當天或之前。
 系統推算 = 起算餘額 + 起算日後所有分錄在該銀行科目的淨變動（不分公司欄位）。
 `errors` 有內容（如帳號對不到科目）時 `ok` 為 false，但其他列仍會寫入。
-HTTP 401 = 金鑰錯誤；501 = 伺服器未設定 `ROBOT_TOKEN` / `SUPABASE_SERVICE_ROLE_KEY`。
+HTTP 401 = 憑證無效或已過期；403 = 該帳號不在 `ROBOT_EMAILS` 白名單；501 = 伺服器未設定 `SUPABASE_SERVICE_ROLE_KEY`。
 
 ### 用 PowerShell 先手動測一次
 
 ```powershell
+# 1) 用機器人的 Supabase 帳號登入，取得 access_token
+$login = Invoke-RestMethod -Method Post `
+  -Uri 'https://<專案代號>.supabase.co/auth/v1/token?grant_type=password' `
+  -Headers @{ apikey = '<SUPABASE_ANON_KEY>' } -ContentType 'application/json' `
+  -Body (@{ email = '<機器人帳號email>'; password = '<密碼>' } | ConvertTo-Json)
+
+# 2) 帶 access_token 呼叫 API
 $body = @{ dryRun = $true; rows = @(@{ date = '2026-10-14'; accountNo = '062035010608'; balance = '878,803.00' }) } | ConvertTo-Json -Depth 5
 Invoke-RestMethod -Method Post -Uri 'https://<你的網址>/.netlify/functions/bank-balance' `
-  -Headers @{ Authorization = 'Bearer <ROBOT_TOKEN>' } -ContentType 'application/json; charset=utf-8' `
+  -Headers @{ Authorization = "Bearer $($login.access_token)" } -ContentType 'application/json; charset=utf-8' `
   -Body ([Text.Encoding]::UTF8.GetBytes($body))
 ```
 
@@ -111,7 +123,7 @@ Invoke-RestMethod -Method Post -Uri 'https://<你的網址>/.netlify/functions/b
 
 ```
 Main.xaml
- ├─ 讀 Config（Orchestrator Asset：ApiUrl、RobotToken[Credential]、通知收件人）
+ ├─ 讀 Config（Orchestrator Asset：ApiUrl、機器人 Supabase 帳密[Credential]、通知收件人）
  ├─ Invoke 既有登入流程
  ├─ 決定日期（昨天；漏跑時可傳入補跑區間）
  ├─ For Each 帳戶 × 日期

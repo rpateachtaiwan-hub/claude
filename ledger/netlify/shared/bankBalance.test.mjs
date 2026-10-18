@@ -63,6 +63,13 @@ describe('bank-balance API', () => {
     const calls = []
     vi.stubGlobal('fetch', async (u, init = {}) => {
       const url = new URL(u)
+      // GoTrue 驗證：robot-jwt = 機器人帳號、user-jwt = 一般使用者、其他 = 無效憑證
+      if (url.pathname.endsWith('/auth/v1/user')) {
+        const tok = (init.headers?.Authorization || '').replace(/^Bearer\s+/i, '')
+        if (tok === 'robot-jwt') return new Response(JSON.stringify({ email: 'rpateachtaiwan@gmail.com' }), { status: 200 })
+        if (tok === 'user-jwt') return new Response(JSON.stringify({ email: 'someone@else.com' }), { status: 200 })
+        return new Response('{}', { status: 401 })
+      }
       const table = url.pathname.split('/').pop()
       calls.push({ method: init.method ?? 'GET', table, search: decodeURIComponent(url.search) })
       if ((init.method ?? 'GET') === 'POST') {
@@ -86,18 +93,18 @@ describe('bank-balance API', () => {
     })
     return calls
   }
-  const call = (body, token = 'secret') => handler({ httpMethod: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
+  const call = (body, token = 'robot-jwt') => handler({ httpMethod: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
   const env = () => {
     vi.stubEnv('SUPABASE_URL', 'https://x.supabase.co')
     vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'svc')
-    vi.stubEnv('ROBOT_TOKEN', 'secret')
   }
   const entry = (date, amt) => ({ date, company: '娛樂', lines: [{ accountCode: '1114', debit: amt, credit: 0 }, { accountCode: '4101', debit: 0, credit: amt }] })
 
-  it('金鑰錯誤 → 401；未設定 → 501', async () => {
+  it('憑證無效 → 401；非機器人帳號 → 403；未設定 → 501', async () => {
     expect((await call({ rows: [] })).statusCode).toBe(501)
     env(); fakeSupabase({ rules: [], entries: [], companies: [] })
     expect((await call({ rows: [{}] }, 'nope')).statusCode).toBe(401)
+    expect((await call({ rows: [{}] }, 'user-jwt')).statusCode).toBe(403)
   })
 
   it('寫入：帳號自動對科目、公司由分錄推斷；推算 = 設定的起算餘額 + 流水（不分公司），與同日銀行比對', async () => {
