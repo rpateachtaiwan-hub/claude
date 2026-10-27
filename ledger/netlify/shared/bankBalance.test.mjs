@@ -8,7 +8,7 @@ vi.mock('./openingBalances.mjs', () => ({
     '001035016976': { company: '菸酒', opening: 500 },
   },
 }))
-import { checkOn, normalizeRow, resolveCompany } from './bankBalance.mjs'
+import { normalizeRow, resolveCompany } from './bankBalance.mjs'
 import { handler } from '../functions/bank-balance.mjs'
 
 const ACCOUNTS = [
@@ -31,14 +31,6 @@ describe('資料正規化與核對', () => {
       .toMatchObject({ date: '2026-10-14', accountNo: '062035010608', balance: 878803, available: 878803 })
     expect(normalizeRow({ date: 'x', accountNo: '1', balance: 1 }, 0).error).toMatch(/日期/)
     expect(normalizeRow({ date: '2026-10-14', balance: 1 }, 0).error).toMatch(/accountNo/)
-  })
-  it('期初餘額 + 起算日後（不含 1/1）該公司 112 流水 vs 同日銀行', () => {
-    const ent = (date, d, c) => ({ date, lines: [{ accountCode: '112', debit: d, credit: c }, { accountCode: '4101', debit: c, credit: d }] })
-    const entries = [ent('2026-01-01', 7, 0), ent('2026-01-05', 500, 0), ent('2026-01-06', 0, 100)]
-    expect(checkOn(1000, entries, '112', '2026-01-06', 1400)).toMatchObject({ status: 'match', computed: 1400, diff: 0 })
-    expect(checkOn(1000, entries, '112', '2026-01-06', 1300)).toMatchObject({ status: 'mismatch', diff: 100 })
-    expect(checkOn(undefined, entries, '112', '2026-01-06', 1).status).toBe('no_anchor')
-    expect(checkOn(1000, entries, '112', '2026-01-01', 1).status).toBe('before_anchor')
   })
 })
 
@@ -91,19 +83,20 @@ describe('bank-balance API', () => {
     expect((await call({ rows: [{}] }, 'user-jwt')).statusCode).toBe(403)
   })
 
-  it('寫入：帳號→設定的公司（容忍前綴：娛樂→路特娛樂）；推算只計該公司的 112 分錄', async () => {
+  it('寫入：帳號→設定的公司（容忍前綴：娛樂→路特娛樂）；只寫入不核對，不讀分錄', async () => {
     env()
     const state = {
       companies: ['路特娛樂', '路特菸酒'],
       entries: [entry('2025-12-31', 999), entry('2026-01-05', 300), entry('2026-01-05', 50, '路特菸酒')],
       rules: [],
     }
-    fakeSupabase(state)
+    const calls = fakeSupabase(state)
     const res = await call({ rows: [{ date: '2026/01/06', accountNo: '062035010608', balance: '1,250.00', available: '1,250.00' }] })
     const out = JSON.parse(res.body)
     expect(res.statusCode).toBe(200)
-    // 1000(期初) + 300(路特娛樂 1/5) = 1300；1/1 前與他公司（路特菸酒 +50）不計
-    expect(out.results[0]).toMatchObject({ accountCode: '112', company: '路特娛樂', status: 'mismatch', computed: 1300, diff: 50 })
+    expect(out.results[0]).toEqual({ date: '2026-01-06', accountNo: '062035010608', accountCode: '112', company: '路特娛樂', balance: 1250, available: 1250 })
+    expect(out).toMatchObject({ ok: true, dryRun: false, written: 1, errors: [] })
+    expect(calls.some((c) => c.table === 'entries')).toBe(false) // 不撈分錄，分錄再多也不會變慢
     expect(state.rules[0].id).toBe('DB|路特娛樂|112|2026-01-06')
     expect(state.rules[0].data).toMatchObject({ kind: 'daily_bal', accountCode: '112', company: '路特娛樂', balance: 1250, available: 1250, source: 'rpa' })
   })
@@ -121,7 +114,8 @@ describe('bank-balance API', () => {
     expect(out.ok).toBe(false)
     expect(out.written).toBe(0)
     expect(out.results).toHaveLength(1)
-    expect(out.results[0]).toMatchObject({ status: 'match', computed: 1300 })
+    expect(out.results[0]).toMatchObject({ date: '2026-01-05', accountNo: '062035010608', accountCode: '112', company: '路特娛樂', balance: 1300 })
+    expect(out.results[0]).not.toHaveProperty('status')
     expect(out.errors[0]).toMatch(/031087072820.*未設定對應公司/)
     expect(state.rules).toHaveLength(0)
   })

@@ -8,18 +8,18 @@
 //   - accountNo 以 netlify/shared/openingBalances.mjs 的 BANK_ACCOUNTS 對應公司（每家公司一個台幣帳戶），
 //     科目固定為 112 銀行現金；不在清單內的帳號回報「未設定對應公司」錯誤
 //   - balance = 網銀「帳戶餘額」（用於核對）；available = 「可用餘額」（僅記錄）
-//   - dryRun: true 只檢查對應與核對結果，不寫入
-// 回應：{ ok, written, results: [{ date, accountNo, accountCode, company, balance, status, computed, diff }], errors }
-//   status：match 相符 / mismatch 不符 / before_anchor 起算日當天或之前
-//   推算 = 該公司 2026-01-01 期初餘額 + 1/1 之後（不含）至當日「該公司」分錄中 112 的（借 − 貸），
-//   與同日該公司台幣帳戶的網銀餘額比對
+//   - dryRun: true 只檢查格式與帳號對應，不寫入
+// 回應：{ ok, dryRun, written, results: [{ date, accountNo, accountCode, company, balance, available }], errors }
+//
+// 本函式只負責「寫入」，不做核對（不讀分錄，分錄再多也不會變慢）。
+// 核對（期初餘額 + 112 銀行現金流水 vs 銀行餘額）在記帳系統「報表 → 每日餘額核對」開啟時即時計算。
 //
 // 金鑰：SUPABASE_SERVICE_ROLE_KEY 只存在伺服器端環境變數。
 // 機器人帳號白名單：ROBOT_EMAILS（Netlify 環境變數，逗號分隔；預設 rpateachtaiwan@gmail.com）。
 // 401 = 憑證無效/過期；403 = 登入者不在 ROBOT_EMAILS；501 = 未設定 SUPABASE_SERVICE_ROLE_KEY。
 
 import {
-  ANCHOR_DATE, BANK_ACCOUNTS, CASH_ACCOUNT_CODE, checkOn, dailyBalanceId, normalizeRow, resolveCompany,
+  BANK_ACCOUNTS, CASH_ACCOUNT_CODE, dailyBalanceId, normalizeRow, resolveCompany,
 } from '../shared/bankBalance.mjs'
 
 export async function handler(event) {
@@ -68,7 +68,7 @@ async function route(event) {
     if (!cfg) { errors.push(`第 ${i + 1} 筆：帳號 ${r.accountNo} 未設定對應公司（請在 openingBalances.mjs 的 BANK_ACCOUNTS 設定）`); continue }
     const company = resolveCompany(cfg.company, companies)
     if (!company) { errors.push(`第 ${i + 1} 筆：設定的公司「${cfg.company}」對不到系統公司清單（現有：${companies.join('、') || '無'}）`); continue }
-    resolved.push({ ...r, accountCode: CASH_ACCOUNT_CODE, company, opening: cfg.opening })
+    resolved.push({ ...r, accountCode: CASH_ACCOUNT_CODE, company })
   }
 
   const now = new Date().toISOString()
@@ -85,20 +85,10 @@ async function route(event) {
     for (let i = 0; i < docs.length; i += 200) await rest.upsert('rules', docs.slice(i, i + 200))
   }
 
-  // 核對結果：該公司起算日後、碰到 112 的分錄
-  const results = []
-  const entryCache = new Map()
-  for (const r of resolved) {
-    if (!entryCache.has(r.company)) {
-      const filter = { company: r.company, lines: [{ accountCode: CASH_ACCOUNT_CODE }] }
-      entryCache.set(r.company, (await rest.all(`entries?select=data&date=gt.${ANCHOR_DATE}&data=cs.${enc(JSON.stringify(filter))}`)).map((x) => x.data))
-    }
-    results.push({
-      date: r.date, accountNo: r.accountNo, accountCode: r.accountCode, company: r.company,
-      balance: r.balance, available: r.available,
-      ...checkOn(r.opening, entryCache.get(r.company), CASH_ACCOUNT_CODE, r.date, r.balance),
-    })
-  }
+  const results = resolved.map((r) => ({
+    date: r.date, accountNo: r.accountNo, accountCode: r.accountCode, company: r.company,
+    balance: r.balance, available: r.available,
+  }))
 
   const status = resolved.length === 0 ? 400 : 200
   return json(status, { ok: resolved.length > 0 && errors.length === 0, dryRun, written: dryRun ? 0 : docs.length, results, errors })
@@ -131,7 +121,6 @@ function makeRest(url, key) {
   }
 }
 
-const enc = (s) => encodeURIComponent(s)
 const clean = (s) => (s ? String(s).trim() : '')
 function json(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(body) }

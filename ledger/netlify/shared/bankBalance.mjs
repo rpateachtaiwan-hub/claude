@@ -59,24 +59,3 @@ export function normalizeRow(r, i) {
   if (!accountNo) return { error: `${at}：缺少帳號 accountNo` }
   return { row: { date, balance, available, accountNo } }
 }
-
-/** 某分錄對某科目的淨變動（借 − 貸）。 */
-export function netOf(entry, accountCode) {
-  let n = 0
-  for (const l of entry?.lines ?? []) if (l.accountCode === accountCode) n += (l.debit || 0) - (l.credit || 0)
-  return n
-}
-
-/**
- * 推算某日日終餘額並與同日銀行餘額比對：
- * 推算 = 該公司期初餘額 + 起算日後（不含）至當日（含）分錄在 112 的淨變動。
- * entries 須先由呼叫端過濾為「該公司」的分錄。
- */
-export function checkOn(opening, entries, accountCode, date, bank, anchorDate = ANCHOR_DATE) {
-  if (opening === undefined) return { status: 'no_anchor' }
-  if (date <= anchorDate) return { status: 'before_anchor' }
-  let computed = opening
-  for (const e of entries) if (e.date > anchorDate && e.date <= date) computed += netOf(e, accountCode)
-  const diff = computed - bank
-  return { status: diff === 0 ? 'match' : 'mismatch', computed, diff }
-}

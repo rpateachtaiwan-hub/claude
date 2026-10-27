@@ -1,11 +1,11 @@
 # 銀行餘額機器人（UiPath）— 規格與交接
 
 每天自動到國泰世華 Global MyB2B 查各公司台幣帳戶的餘額，呼叫系統 API 寫入
-「報表 → 每日餘額核對」，並把核對結果（相符 / 不符）通知財務。
+「報表 → 每日餘額核對」。核對結果（相符 / 不符 / 差額）在該畫面開啟時即時計算。
 
 ```
 既有 UiPath 登入流程 ─► 本機器人：逐帳戶查餘額 ─► POST /.netlify/functions/bank-balance ─► 系統（Supabase）
-                                                  ◄─ 回傳每個帳戶 match / mismatch / diff ─► 寄信或通知
+                                                  ◄─ 回傳寫入結果（written / errors）─► 失敗時通知
 ```
 
 ## 1. 網銀操作步驟（依錄影整理）
@@ -96,13 +96,13 @@ Content-Type: application/json
   "ok": true, "dryRun": false, "written": 1, "errors": [],
   "results": [
     { "date": "2026-10-14", "accountNo": "062035010608", "accountCode": "112", "company": "路特娛樂",
-      "balance": 878803, "status": "mismatch", "computed": 879103, "diff": 300 }
+      "balance": 878803, "available": 878803 }
   ]
 }
 ```
 
-`status`：`match` 相符、`mismatch` 不符（`diff` = 系統推算 − 銀行）、`before_anchor` 查詢日期在起算日（2026/1/1）當天或之前。
-系統推算 = 該公司 1/1 期初餘額 + 1/1 之後（不含）至當日「該公司」分錄在 112 銀行現金的淨變動（借 − 貸）。
+API 只負責寫入，**不回傳核對結果**（不讀分錄，分錄再多也不會變慢）。
+核對在「報表 → 每日餘額核對」開啟時即時計算：該公司 1/1 期初餘額 + 1/1 之後（不含）至當日「該公司」分錄在 112 銀行現金的淨變動（借 − 貸），與同日銀行餘額比對。
 `errors` 有內容（如帳號對不到科目）時 `ok` 為 false，但其他列仍會寫入。
 HTTP 401 = 憑證無效或已過期；403 = 該帳號不在 `ROBOT_EMAILS` 白名單；501 = 伺服器未設定 `SUPABASE_SERVICE_ROLE_KEY`。
 
@@ -137,7 +137,7 @@ Main.xaml
  │    ├─ Extract Table → 取 帳號、幣別、帳戶餘額、可用餘額；幣別≠新台幣則略過
  │    └─ 加入 rows；失敗重試 2 次，仍失敗記錄錯誤並繼續下一個
  ├─ HTTP POST rows（每 200 筆一批）到 bank-balance API
- ├─ 依回應組通知：不符的帳戶（日期、差額）、errors、查詢失敗的帳戶
+ ├─ 依回應組通知：errors、查詢失敗的帳戶（核對結果請看「每日餘額核對」畫面）
  └─ 登出網銀
 ```
 
