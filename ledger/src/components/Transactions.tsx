@@ -39,6 +39,8 @@ export default function Transactions() {
   const [reviewedFilter, setReviewedFilter] = useState<'all' | 'un' | 'done'>('all')
   const [aiFilter, setAiFilter] = useState<'all' | 'low' | 'differ' | 'none'>('all')
   const [companyFilter, setCompanyFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('') // YYYY-MM-DD，含當日；空 = 不限
+  const [dateTo, setDateTo] = useState('')
   const [editing, setEditing] = useState<JournalEntry | null>(null)
   const [pairFor, setPairFor] = useState<JournalEntry | null>(null)
   const [aiBusy, setAiBusy] = useState<string | null>(null)
@@ -137,6 +139,8 @@ export default function Transactions() {
       if (aiFilter === 'differ' && !aiDiffers(e)) return false
       if (aiFilter === 'none' && e.ai) return false
       if (companyFilter && e.company !== companyFilter) return false
+      if (dateFrom && e.date < dateFrom) return false
+      if (dateTo && e.date > dateTo) return false
       if (!kw) return true
       const hay = [e.date, e.description, e.counterparty ?? '', e.company ?? '', e.counterpartyAccount ?? '', e.branch ?? '', e.voucherNo ?? '', e.note ?? '', accName(debitCodeOf(e)), accName(creditCodeOf(e)), String(amountOf(e)), e.seq != null ? String(e.seq) : '', fmtSeq(e.seq)].join(' ').toLowerCase()
       return hay.includes(kw)
@@ -154,12 +158,12 @@ export default function Transactions() {
       }
       return asc ? r : -r
     })
-  }, [entries, q, sortKey, asc, onlyReview, reviewedFilter, aiFilter, aiDiffers, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entries, q, sortKey, asc, onlyReview, reviewedFilter, aiFilter, aiDiffers, companyFilter, dateFrom, dateTo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize))
   const safePage = Math.min(page, pageCount - 1)
   const pagedRows = rows.slice(safePage * pageSize, safePage * pageSize + pageSize)
-  React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, aiFilter, companyFilter])
+  React.useEffect(() => { setPage(0) }, [q, onlyReview, reviewedFilter, aiFilter, companyFilter, dateFrom, dateTo])
 
   /** 目前篩選中「待分類且尚未 AI 評分」的筆數（預設只判讀待分類；勾選可強制評任何筆） */
   const aiUnscored = useMemo(
@@ -346,6 +350,26 @@ export default function Transactions() {
             {companies.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
+        <div className={`flex items-center gap-1 border rounded-lg px-2 py-1 text-sm ${dateFrom || dateTo ? 'border-brand bg-brand-soft' : 'border-gray-300'}`}
+          title="日期篩選（含起訖當天）；只填一邊表示不限另一邊">
+          <span className="text-gray-500 text-xs whitespace-nowrap">日期</span>
+          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)}
+            className="bg-transparent py-1 focus:outline-none" aria-label="起始日期" />
+          <span className="text-gray-400">~</span>
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)}
+            className="bg-transparent py-1 focus:outline-none" aria-label="結束日期" />
+          <select value="" onChange={(e) => { const r = datePreset(e.target.value); if (r) { setDateFrom(r[0]); setDateTo(r[1]) } }}
+            className="bg-transparent text-xs text-gray-600 focus:outline-none" aria-label="快速選擇期間">
+            <option value="">快速</option>
+            <option value="thisMonth">本月</option>
+            <option value="lastMonth">上月</option>
+            <option value="thisYear">今年</option>
+            <option value="lastYear">去年</option>
+          </select>
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(''); setDateTo('') }} className="text-gray-400 hover:text-red-500 px-1" title="清除日期篩選">✕</button>
+          )}
+        </div>
         <select value={reviewedFilter} onChange={(e) => setReviewedFilter(e.target.value as 'all' | 'un' | 'done')}
           className={`border rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand ${reviewedFilter === 'un' ? 'border-brand text-brand-dark bg-brand-soft' : 'border-gray-300'}`}
           title="核對進度篩選：中斷後回來選「未核對」即可接著做">
@@ -798,3 +822,15 @@ function L({ t, children }: { t: string; children: React.ReactNode }) {
   return <div><label className="block text-xs text-gray-500 mb-1">{t}</label>{children}</div>
 }
 const inp = 'w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand'
+
+/** 快速期間（本地時間）→ [起, 迄]（YYYY-MM-DD，含當日） */
+function datePreset(key: string): [string, string] | null {
+  const now = new Date()
+  const y = now.getFullYear(), m = now.getMonth()
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  if (key === 'thisMonth') return [fmt(new Date(y, m, 1)), fmt(new Date(y, m + 1, 0))]
+  if (key === 'lastMonth') return [fmt(new Date(y, m - 1, 1)), fmt(new Date(y, m, 0))]
+  if (key === 'thisYear') return [`${y}-01-01`, `${y}-12-31`]
+  if (key === 'lastYear') return [`${y - 1}-01-01`, `${y - 1}-12-31`]
+  return null
+}
