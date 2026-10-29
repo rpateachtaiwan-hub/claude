@@ -253,7 +253,12 @@ function ImportTx() {
     if (!ids.length) return
     if (!confirm(`將這 ${ids.length} 筆「不匯入」的銀行明細從待入帳清單刪除？\n之後不會再出現在「檢查待入帳明細」（原始資料仍保留在資料庫，可追溯）。`)) return
     const { error } = await supabase.from('bank_transactions').update({ status: 'dismissed' }).in('id', ids)
-    if (error) { setDismissNote(`⚠ 刪除失敗：${error.message}`); return }
+    if (error) {
+      setDismissNote(/bank_transactions_status_check/.test(error.message)
+        ? '⚠ 刪除失敗：資料庫尚未允許「已刪除（dismissed）」狀態。請管理員在 Supabase SQL Editor 執行 ledger/supabase/bank_transactions_dismissed.sql 一次後再試；本次匯入不受影響，這些列下次載入時會再出現。'
+        : `⚠ 刪除失敗：${error.message}`)
+      return
+    }
     setDismissedIds((p) => [...p, ...ids])
     setDismissNote(`已從待入帳清單刪除 ${ids.length} 筆。`)
   }
