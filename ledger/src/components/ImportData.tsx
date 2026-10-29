@@ -139,10 +139,10 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setOpeningOverride({}); setSkipRows({}); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setOpeningOverride({}); setSkipRows({}); setDismissedIds([]); setDismissNote(null); setRawRows(rows) }
 
   function handleBank(rows: string[][], batch: BankBatch) {
-    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setOpeningOverride({}); setSkipRows({}); setRawRows(rows)
+    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setOpeningOverride({}); setSkipRows({}); setDismissedIds([]); setDismissNote(null); setRawRows(rows)
     // 依帳號自動帶入公司與銀行科目；帶不出來就維持現值，由使用者自己選
     const co = suggestCompany(batch.bankCompany, companies)
     const cc = suggestCashCode(batch.acct, cashOptions)
@@ -236,6 +236,28 @@ function ImportTx() {
     }
   }
 
+  /** 被排除列對應的銀行明細 id（僅當資料來自機器人暫存區） */
+  const skippedBankIds = React.useMemo(() => {
+    if (!bankBatch || !parsed) return [] as number[]
+    return parsed.rowResults
+      .filter((r) => r.status === 'skipped' && r.srcIdx !== undefined)
+      .map((r) => bankBatch.ids[r.srcIdx!])
+      .filter((id): id is number => id !== undefined)
+  }, [bankBatch, parsed])
+  const [dismissedIds, setDismissedIds] = useState<number[]>([])
+  const [dismissNote, setDismissNote] = useState<string | null>(null)
+
+  /** 把「不匯入」的銀行明細從待入帳清單刪除（標記 dismissed，之後不再出現；原始資料保留於資料庫） */
+  async function dismissSkippedBankRows() {
+    const ids = skippedBankIds.filter((id) => !dismissedIds.includes(id))
+    if (!ids.length) return
+    if (!confirm(`將這 ${ids.length} 筆「不匯入」的銀行明細從待入帳清單刪除？\n之後不會再出現在「檢查待入帳明細」（原始資料仍保留在資料庫，可追溯）。`)) return
+    const { error } = await supabase.from('bank_transactions').update({ status: 'dismissed' }).in('id', ids)
+    if (error) { setDismissNote(`⚠ 刪除失敗：${error.message}`); return }
+    setDismissedIds((p) => [...p, ...ids])
+    setDismissNote(`已從待入帳清單刪除 ${ids.length} 筆。`)
+  }
+
   async function doImport() {
     if (!parsed?.entries.length || needCompany || !cashCode) return
     setBusy(true)
@@ -249,13 +271,22 @@ function ImportTx() {
       const skipped = parsed.skippedByUser > 0 ? `；手動排除 ${parsed.skippedByUser} 筆` : ''
       let bankNote = ''
       if (bankBatch) {
-        const { error } = await supabase.from('bank_transactions').update({ status: 'matched' }).in('id', bankBatch.ids)
-        bankNote = error ? `；⚠ 銀行明細標記失敗（${error.message}），下次載入可能重複出現` : '；銀行明細已標記入帳'
+        // 只把「真正匯入／已存在」的列標記入帳；被排除的列維持原狀（未刪除者下次載入會再出現）
+        const skipSet = new Set(skippedBankIds)
+        const matchedIds = bankBatch.ids.filter((id) => !skipSet.has(id))
+        const { error } = matchedIds.length
+          ? await supabase.from('bank_transactions').update({ status: 'matched' }).in('id', matchedIds)
+          : { error: null }
+        const leftover = skippedBankIds.filter((id) => !dismissedIds.includes(id)).length
+        bankNote = error
+          ? `；⚠ 銀行明細標記失敗（${error.message}），下次載入可能重複出現`
+          : `；銀行明細已標記入帳${leftover ? `（${leftover} 筆排除列仍留在待入帳清單）` : ''}`
         setBankBatch(null)
         setBankSuggest(null)
       }
       setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${skipped}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}${bankNote}`)
       setRawRows(null)
+      setDismissedIds([]); setDismissNote(null)
     } finally { setBusy(false) }
   }
 
@@ -400,6 +431,18 @@ function ImportTx() {
           <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} action={rowAction} />
           <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} action={rowAction} />
           <PreviewSection title={`不匯入（手動排除 ${parsed.skippedByUser} 筆，點「恢復匯入」可取消）`} rows={parsed.rowResults.filter((r) => r.status === 'skipped')} accName={accName} max={999} action={rowAction} />
+          {bankBatch && skippedBankIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {skippedBankIds.some((id) => !dismissedIds.includes(id)) && (
+                <button onClick={dismissSkippedBankRows}
+                  className="px-3 py-1.5 rounded-lg border border-red-300 text-red-600 bg-white hover:bg-red-50 font-medium">
+                  🗑 將 {skippedBankIds.filter((id) => !dismissedIds.includes(id)).length} 筆「不匯入」從待入帳清單刪除
+                </button>
+              )}
+              <span className="text-gray-500">未刪除的排除列，下次「檢查待入帳明細」仍會出現。</span>
+              {dismissNote && <span className={dismissNote.startsWith('⚠') ? 'text-red-600' : 'text-green-700'}>{dismissNote}</span>}
+            </div>
+          )}
           <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
             {busy ? '匯入中…' : `確認匯入 ${parsed.importableRows} 筆交易${company ? `到「${company}」` : ''}`}
           </button>
@@ -478,6 +521,8 @@ interface RowResult {
   date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus; openingIdx?: number
   /** 到達分類流程的列序號（與 AI verdicts 對齊；「不匯入」切換用鍵值） */
   planIdx?: number
+  /** 來源資料列序號（rawRows 去掉標題後的第幾列；對回 bankBatch.ids 用） */
+  srcIdx?: number
 }
 
 interface MapOpts {
@@ -538,7 +583,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
   let lastBalance: number | null = null
   let netAtBalance = 0 // 最後一個「有餘額」列當下的累計淨額（檔案常中途停填餘額欄，其後不列入勾稽）
 
-  for (const row of rows.slice(1)) {
+  for (const [srcIdx, row] of rows.slice(1).entries()) {
     // 只看核心欄位判斷空列（忽略帳戶/餘額欄，檔尾常整片只剩餘額）
     const core = [cDate, cDesc, cCat, cIn, cOut].filter((i) => i >= 0)
     if (core.every((i) => !(row[i] ?? '').trim())) {
@@ -574,7 +619,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
       rowOpeningIdx = openingIdx++
       if (!mapOpts.openingOverride?.[rowOpeningIdx]) {
         result.openingCount++
-        result.rowResults.push({ date, desc, amount, direction, plan: { debitCode: '', creditCode: '', account: '', review: false, accrual: false }, status: 'opening', openingIdx: rowOpeningIdx })
+        result.rowResults.push({ date, desc, amount, direction, plan: { debitCode: '', creditCode: '', account: '', review: false, accrual: false }, status: 'opening', openingIdx: rowOpeningIdx, srcIdx })
         continue
       }
       result.openingImported++
@@ -599,19 +644,19 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
       // 人工排除：不產生分錄、不佔防重複配額（仍已計入上方 runningNet，檔內勾稽不受影響）
       if (mapOpts.skipRows?.[planIdx]) {
         result.skippedByUser++
-        result.rowResults.push({ date, desc, amount, direction, plan, status: 'skipped', openingIdx: rowOpeningIdx, planIdx })
+        result.rowResults.push({ date, desc, amount, direction, plan, status: 'skipped', openingIdx: rowOpeningIdx, planIdx, srcIdx })
         continue
       }
       // 重複偵測：系統已有同（公司+日期+金額+摘要）者，按剩餘次數略過
       if (remaining && consumeDup(remaining, date, amount, desc, mapOpts.company)) {
         result.duplicateCount++
-        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup', openingIdx: rowOpeningIdx, planIdx })
+        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup', openingIdx: rowOpeningIdx, planIdx, srcIdx })
         continue
       }
       const entries = rowToEntries(rowInput, cashCode, accounts, rowOpts)
       result.entries.push(...entries)
       const status: RowStatus = plan.accrual ? 'accrual' : plan.review ? 'review' : 'cash'
-      result.rowResults.push({ date, desc, amount, direction, plan, status, openingIdx: rowOpeningIdx, planIdx })
+      result.rowResults.push({ date, desc, amount, direction, plan, status, openingIdx: rowOpeningIdx, planIdx, srcIdx })
       result.importableRows++
       if (plan.accrual) result.accrualCount++
       if (plan.review) result.needsReviewCount++
