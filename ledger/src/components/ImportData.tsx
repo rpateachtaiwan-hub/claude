@@ -119,6 +119,8 @@ function ImportTx() {
   const [aiErr, setAiErr] = useState<string | null>(null)
   /** 期初餘額判定的人工覆寫（openingIdx → 改為匯入） */
   const [openingOverride, setOpeningOverride] = useState<Record<number, boolean>>({})
+  /** 人工排除不匯入的列（planIdx → true） */
+  const [skipRows, setSkipRows] = useState<Record<number, boolean>>({})
   /** 若本批資料來自機器人銀行明細暫存區，記錄其 id 清單；匯入成功後標記已入帳 */
   const [bankBatch, setBankBatch] = useState<BankBatch | null>(null)
   /** 依銀行帳號自動帶入的公司／科目，顯示給使用者確認 */
@@ -137,10 +139,10 @@ function ImportTx() {
     }
   }, [accounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setOpeningOverride({}); setRawRows(rows) }
+  function handle(rows: string[][]) { setDone(null); setCatOverride({}); setBankBatch(null); setBankSuggest(null); setAiRun(null); setAiErr(null); setOpeningOverride({}); setSkipRows({}); setRawRows(rows) }
 
   function handleBank(rows: string[][], batch: BankBatch) {
-    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setOpeningOverride({}); setRawRows(rows)
+    setDone(null); setCatOverride({}); setBankBatch(batch); setAiRun(null); setAiErr(null); setOpeningOverride({}); setSkipRows({}); setRawRows(rows)
     // 依帳號自動帶入公司與銀行科目；帶不出來就維持現值，由使用者自己選
     const co = suggestCompany(batch.bankCompany, companies)
     const cc = suggestCashCode(batch.acct, cashOptions)
@@ -167,9 +169,10 @@ function ImportTx() {
           company: company || undefined,
           ai: aiRun,
           openingOverride,
+          skipRows,
         })
       : null),
-    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun, openingOverride],
+    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun, openingOverride, skipRows],
   )
   const needCompany = companies.length > 0 && !company
 
@@ -191,8 +194,31 @@ function ImportTx() {
 
   function toggleOpening(oi: number) {
     setOpeningOverride((p) => ({ ...p, [oi]: !p[oi] }))
+    setSkipRows({}) // 期初列增減會位移 planIdx，排除鍵值跟著失效
     if (aiRun) setAiRun(null) // 列的增減會改變 AI 結果的對齊，需重新評分
   }
+
+  function toggleSkip(pi: number) {
+    setSkipRows((p) => ({ ...p, [pi]: !p[pi] })) // 不影響 AI 對齊（排除列仍佔一個序號），無需重跑
+  }
+
+  /** 每列的操作鈕：期初覆寫 ＋ 不匯入/恢復 */
+  const rowAction = (r: RowResult): React.ReactNode => (
+    <>
+      {openingAction(r)}
+      {r.planIdx !== undefined && r.status !== 'dup' && (r.status === 'skipped' ? (
+        <button onClick={() => toggleSkip(r.planIdx!)} title="此列已被手動排除；點擊恢復匯入"
+          className="ml-1 rounded px-1.5 py-0.5 text-brand border border-brand-light/60 bg-white hover:bg-brand-soft underline decoration-dotted">
+          ↩ 恢復匯入
+        </button>
+      ) : (
+        <button onClick={() => toggleSkip(r.planIdx!)} title="這一列不要匯入（仍計入檔內餘額勾稽；可隨時恢復）"
+          className="ml-1 rounded px-1.5 py-0.5 text-gray-500 border border-gray-300 bg-white hover:bg-gray-50 underline decoration-dotted">
+          ✕ 不匯入
+        </button>
+      ))}
+    </>
+  )
 
   async function runAi() {
     if (!parsed?.aiInputs.length || aiBusy) return
@@ -220,6 +246,7 @@ function ImportTx() {
       const review = entries.filter((e) => e.needsReview).length
       const accr = parsed.accrualCount > 0 ? `，含 ${parsed.accrualCount} 筆跨期自動拆應計` : ''
       const dup = parsed.duplicateCount > 0 ? `；略過已存在 ${parsed.duplicateCount} 筆` : ''
+      const skipped = parsed.skippedByUser > 0 ? `；手動排除 ${parsed.skippedByUser} 筆` : ''
       let bankNote = ''
       if (bankBatch) {
         const { error } = await supabase.from('bank_transactions').update({ status: 'matched' }).in('id', bankBatch.ids)
@@ -227,7 +254,7 @@ function ImportTx() {
         setBankBatch(null)
         setBankSuggest(null)
       }
-      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}${bankNote}`)
+      setDone(`已匯入 ${parsed.importableRows} 筆交易（共 ${entries.length} 張分錄${accr}）${company ? `／公司：${company}` : ''}${dup}${skipped}${review ? `；其中 ${review} 筆待確認（請到「明細」補上）` : ''}${bankNote}`)
       setRawRows(null)
     } finally { setBusy(false) }
   }
@@ -367,11 +394,12 @@ function ImportTx() {
             <span className="basis-full text-[11px] text-gray-400">Claude 依「備註內容＋歷史分類紀錄＋規則建議」判斷科目並誠實打分；分數低於 {AI_CONFIDENCE_THRESHOLD} 自動列入待確認，由人工複核。</span>
           </div>
 
-          <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} action={openingAction} />
-          <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} action={openingAction} />
-          <PreviewSection title={`期初餘額（判定含「餘額」字樣，預設不入帳，略過 ${parsed.openingCount} 列${parsed.openingImported ? `；已人工改為匯入 ${parsed.openingImported} 列` : ''}）`} rows={parsed.rowResults.filter((r) => r.status === 'opening')} accName={accName} max={20} action={openingAction} />
-          <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} action={openingAction} />
-          <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} action={openingAction} />
+          <PreviewSection title={`跨期應計（全部 ${parsed.accrualCount} 筆，請逐筆檢查）`} rows={parsed.rowResults.filter((r) => r.status === 'accrual')} accName={accName} max={999} action={rowAction} />
+          <PreviewSection title={`待確認（全部 ${parsed.needsReviewCount} 筆，匯入後可於明細批次修正）`} rows={parsed.rowResults.filter((r) => r.status === 'review')} accName={accName} max={999} action={rowAction} />
+          <PreviewSection title={`期初餘額（判定含「餘額」字樣，預設不入帳，略過 ${parsed.openingCount} 列${parsed.openingImported ? `；已人工改為匯入 ${parsed.openingImported} 列` : ''}）`} rows={parsed.rowResults.filter((r) => r.status === 'opening')} accName={accName} max={20} action={rowAction} />
+          <PreviewSection title={`已存在（將略過 ${parsed.duplicateCount} 筆）`} rows={parsed.rowResults.filter((r) => r.status === 'dup')} accName={accName} max={5} action={rowAction} />
+          <PreviewSection title="一般現金分錄" rows={parsed.rowResults.filter((r) => r.status === 'cash')} accName={accName} max={10} action={rowAction} />
+          <PreviewSection title={`不匯入（手動排除 ${parsed.skippedByUser} 筆，點「恢復匯入」可取消）`} rows={parsed.rowResults.filter((r) => r.status === 'skipped')} accName={accName} max={999} action={rowAction} />
           <button onClick={doImport} disabled={needCompany || !cashCode || busy} className="px-5 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark disabled:opacity-50">
             {busy ? '匯入中…' : `確認匯入 ${parsed.importableRows} 筆交易${company ? `到「${company}」` : ''}`}
           </button>
@@ -398,7 +426,7 @@ function PreviewSection({ title, rows, accName, max, action }: { title: string; 
           </tr></thead>
           <tbody>
             {shown.map((r, i) => (
-              <tr key={i} className={`border-t border-gray-100 ${r.status === 'review' ? 'bg-amber-50/50' : r.status === 'dup' ? 'opacity-50' : ''}`}>
+              <tr key={i} className={`border-t border-gray-100 ${r.status === 'review' ? 'bg-amber-50/50' : r.status === 'dup' || r.status === 'skipped' ? 'opacity-50' : ''}`}>
                 <td className="px-2 py-1.5 text-gray-500 whitespace-nowrap">{r.date}</td>
                 <td className="px-2 py-1.5 text-gray-700">{r.desc}</td>
                 <td className="px-2 py-1.5 text-xs text-gray-600">{accName(r.plan.debitCode)}</td>
@@ -409,6 +437,7 @@ function PreviewSection({ title, rows, accName, max, action }: { title: string; 
                   {r.status === 'review' && <span className="text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">待確認</span>}
                   {r.status === 'dup' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">已存在</span>}
                   {r.status === 'opening' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5">期初-不入帳</span>}
+                  {r.status === 'skipped' && <span className="text-gray-500 bg-gray-100 rounded px-1.5 py-0.5 line-through">不匯入</span>}
                   {r.status === 'cash' && <span className="text-gray-400">現金</span>}
                   {r.plan.ai && (
                     <span title={`${r.plan.ai.reason ?? ''}（${r.plan.ai.model}）`}
@@ -444,8 +473,12 @@ function matchCategory(catText: string, accounts: Account[]): string | null {
   return sub?.code ?? null
 }
 
-type RowStatus = 'cash' | 'accrual' | 'review' | 'dup' | 'opening'
-interface RowResult { date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus; openingIdx?: number }
+type RowStatus = 'cash' | 'accrual' | 'review' | 'dup' | 'opening' | 'skipped'
+interface RowResult {
+  date: string; desc: string; amount: number; direction: 'in' | 'out'; plan: RowPlan; status: RowStatus; openingIdx?: number
+  /** 到達分類流程的列序號（與 AI verdicts 對齊；「不匯入」切換用鍵值） */
+  planIdx?: number
+}
 
 interface MapOpts {
   catOverride?: Record<string, string>
@@ -457,6 +490,8 @@ interface MapOpts {
   ai?: { verdicts: (AiVerdict | null)[]; model: string; at: string } | null
   /** 期初餘額列人工覆寫：openingIdx → true 表示「改為匯入」（自動判定可能不準） */
   openingOverride?: Record<number, boolean>
+  /** 人工排除：planIdx → true 表示「不匯入」。仍計入檔內餘額勾稽、不佔防重複筆數配額 */
+  skipRows?: Record<number, boolean>
 }
 
 function cleanVoucher(s: string): string | undefined {
@@ -473,7 +508,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     skippedNoAmount: 0, skippedNoDate: 0, needsReviewCount: 0, accrualCount: 0, duplicateCount: 0, openingCount: 0,
     /** 供 AI 分類的輸入（與「到達 planRow 的列」順序對齊） */
     aiInputs: [] as AiRowInput[],
-    aiScored: 0, aiLow: 0, openingImported: 0,
+    aiScored: 0, aiLow: 0, openingImported: 0, skippedByUser: 0,
     /** 餘額勾稽：檔尾餘額 vs 期初+Σ收入−Σ支出（含被略過的重複列，驗證解析正確性） */
     balance: null as null | { expected: number; computed: number; ok: boolean },
   }
@@ -548,6 +583,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
 
     const rowInput: RowInput = { date, amount, direction, description: desc, catText: catText || undefined, counterpartyAccount, branch, voucherNo }
     try {
+      const planIdx = aiIdx
       const verdict = mapOpts.ai?.verdicts[aiIdx] ?? null
       aiIdx++
       const rowOpts = verdict && mapOpts.ai
@@ -560,16 +596,22 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
         ruleSuggestion: verdict ? undefined : (plan.review ? undefined : plan.account),
       })
       if (verdict) { result.aiScored++; if (verdict.confidence < AI_CONFIDENCE_THRESHOLD) result.aiLow++ }
+      // 人工排除：不產生分錄、不佔防重複配額（仍已計入上方 runningNet，檔內勾稽不受影響）
+      if (mapOpts.skipRows?.[planIdx]) {
+        result.skippedByUser++
+        result.rowResults.push({ date, desc, amount, direction, plan, status: 'skipped', openingIdx: rowOpeningIdx, planIdx })
+        continue
+      }
       // 重複偵測：系統已有同（公司+日期+金額+摘要）者，按剩餘次數略過
       if (remaining && consumeDup(remaining, date, amount, desc, mapOpts.company)) {
         result.duplicateCount++
-        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup', openingIdx: rowOpeningIdx })
+        result.rowResults.push({ date, desc, amount, direction, plan, status: 'dup', openingIdx: rowOpeningIdx, planIdx })
         continue
       }
       const entries = rowToEntries(rowInput, cashCode, accounts, rowOpts)
       result.entries.push(...entries)
       const status: RowStatus = plan.accrual ? 'accrual' : plan.review ? 'review' : 'cash'
-      result.rowResults.push({ date, desc, amount, direction, plan, status, openingIdx: rowOpeningIdx })
+      result.rowResults.push({ date, desc, amount, direction, plan, status, openingIdx: rowOpeningIdx, planIdx })
       result.importableRows++
       if (plan.accrual) result.accrualCount++
       if (plan.review) result.needsReviewCount++
