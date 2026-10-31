@@ -11,6 +11,7 @@ export const USER_CODE_ACCOUNTS: Account[] = [
   { code: '609', name: '租金支出', category: 'expense', normalBalance: 'debit' },
   { code: '610', name: '電話網路', category: 'expense', normalBalance: 'debit' },
   { code: '611', name: '水電瓦斯', category: 'expense', normalBalance: 'debit' },
+  { code: '614', name: '手續費', category: 'expense', normalBalance: 'debit' },
   { code: '6021', name: '勞健保', category: 'expense', normalBalance: 'debit' },
   { code: '6022', name: '退休金', category: 'expense', normalBalance: 'debit' },
 ]

@@ -31,6 +31,10 @@ describe('關鍵字配科目', () => {
   it('周轉金 → 股東往來-旅行社(2301)', () => {
     expect(matchByDescription('旅行社－借入周轉金', accounts)?.account).toBe('2301')
   })
+  it('跨行費用 → 使用者自訂 614 手續費（先於通用「手續費」規則）', () => {
+    expect(matchByDescription('跨行費用', accounts)?.account).toBe('614')
+    expect(matchByDescription('ATM跨行費用 15', accounts)?.account).toBe('614')
+  })
   it('提領/自行提款/零用金 → 使用者自訂 112', () => {
     expect(matchByDescription('現金 (大同分行提領)', accounts)?.account).toBe('112')
     expect(matchByDescription('自行提款 0130VCEE', accounts)?.account).toBe('112')

@@ -113,6 +113,7 @@ export const KEYWORD_RULES: KeywordRule[] = [
   { match: '房租', account: '609', direction: 'out' },
   { match: '租金', account: '609', direction: 'out' }, // 支出方向（收入方向在上）
   { match: '外送費用', account: '6107', direction: 'out' },
+  { match: '跨行費用', account: '614' }, // 614 手續費（使用者自訂編號）
   { match: '手續費', account: '6105' },
   { match: '北水', account: '611' },
   { match: '水費', account: '611' },
