@@ -1,3 +1,8 @@
 node_modules/
 .env.local
 *.log
+
+# tsc -b 殘留物（vite.config.js 會蓋過 vite.config.ts，不可提交）
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
