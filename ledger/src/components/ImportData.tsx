@@ -7,7 +7,7 @@ import { supabase, hasSupabase } from '../lib/supabase'
 import { formatTWD } from '../core/money'
 import { parseAmount, normalizeDate } from '../lib/csv'
 import { fileToRows } from '../lib/xlsx'
-import type { Account, Category, JournalEntry } from '../core/types'
+import type { Account, Category, ImportKwRule, JournalEntry } from '../core/types'
 
 type Mode = 'tx' | 'accounts'
 
@@ -104,7 +104,7 @@ interface BankSuggestion {
 
 // ── 匯入歷史交易 ──────────────────────────────────────────────────────────────
 function ImportTx() {
-  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk, aiConfig, addAiUsage } = useLedger()
+  const { accounts, companies, entries, addEntriesBulk, addAccountsBulk, aiConfig, addAiUsage, importKwRules } = useLedger()
   const [rawRows, setRawRows] = useState<string[][] | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [company, setCompany] = useState('')
@@ -170,9 +170,10 @@ function ImportTx() {
           ai: aiRun,
           openingOverride,
           skipRows,
+          userRules: importKwRules,
         })
       : null),
-    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun, openingOverride, skipRows],
+    [rawRows, accounts, cashCode, catOverride, accrualOn, dedupOn, entries, company, aiRun, openingOverride, skipRows, importKwRules],
   )
   const needCompany = companies.length > 0 && !company
 
@@ -542,6 +543,8 @@ interface MapOpts {
   openingOverride?: Record<number, boolean>
   /** 人工排除：planIdx → true 表示「不匯入」。仍計入檔內餘額勾稽、不佔防重複筆數配額 */
   skipRows?: Record<number, boolean>
+  /** 使用者自訂匯入關鍵字規則（優先於內建規則） */
+  userRules?: ImportKwRule[]
 }
 
 function cleanVoucher(s: string): string | undefined {
@@ -579,7 +582,7 @@ function mapTxRows(rows: string[][], accounts: Account[], cashCode: string, mapO
     return result
   }
 
-  const opts = { catOverride: mapOpts.catOverride, matchCategory, accrualOn: mapOpts.accrualOn }
+  const opts = { catOverride: mapOpts.catOverride, matchCategory, accrualOn: mapOpts.accrualOn, userRules: mapOpts.userRules }
   let aiIdx = 0 // 與 mapOpts.ai.verdicts 對齊的序號（每個到達 planRow 的列 +1）
   let openingIdx = 0 // 期初餘額判定列的序號（人工覆寫用鍵值）
   const remaining = mapOpts.existingKeys ? new Map(mapOpts.existingKeys) : null

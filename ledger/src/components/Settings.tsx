@@ -7,6 +7,7 @@ import { estimateCostUsd } from '../core/aiClassify'
 import AuditTrail from './AuditTrail'
 import { downloadCSV, toCSV } from '../lib/csv'
 import { UNIFIED_PRESET_ACCOUNTS } from '../core/accounts'
+import { KEYWORD_RULES } from '../core/importMap'
 import { findSimilarAccounts, ruleTargetIssues, structuralIssues } from '../core/accountAudit'
 import type { Account, Category } from '../core/types'
 
@@ -170,7 +171,141 @@ export default function Settings() {
         </div>
       </section>
 
+      {/* 匯入關鍵字規則 */}
+      <section>
+        <h2 className="text-sm font-bold text-gray-900 mb-2">匯入關鍵字規則</h2>
+        <ImportKwRulesSection />
+      </section>
+
       {(adding || editing) && <AccountModal account={editing} onClose={() => { setAdding(false); setEditing(null) }} onSave={saveAccount} />}
+    </div>
+  )
+}
+
+/** 匯入關鍵字規則管理：自訂規則優先於內建、先命中先贏（順序可調）；目標科目以現有科目表為準。 */
+function ImportKwRulesSection() {
+  const { importKwRules, addImportKwRule, updateImportKwRule, deleteImportKwRule, moveImportKwRule, accounts } = useLedger()
+  const targets = accounts.filter((a) => !a.isCash).sort((a, b) => a.code.localeCompare(b.code))
+  const nameOf = (code: string) =>
+    accounts.find((a) => a.code === code)?.name ?? UNIFIED_PRESET_ACCOUNTS.find((a) => a.code === code)?.name
+  const dirZh: Record<'any' | 'in' | 'out', string> = { any: '不限', in: '收款', out: '付款' }
+
+  const empty = { match: '', account: '', direction: 'any' as 'any' | 'in' | 'out', review: false }
+  const [draft, setDraft] = useState(empty)
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  async function save() {
+    const match = draft.match.trim()
+    if (!match || !draft.account) { alert('請填寫關鍵字並選擇目標科目。'); return }
+    if (editingId) {
+      await updateImportKwRule(editingId, { match, account: draft.account, direction: draft.direction, review: draft.review })
+      setEditingId(null)
+    } else {
+      await addImportKwRule({ match, account: draft.account, direction: draft.direction, review: draft.review })
+    }
+    setDraft(empty)
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="bg-brand-soft border border-brand-light/40 rounded-lg p-3 text-xs text-gray-600 leading-relaxed">
+        匯入時摘要<b>包含</b>關鍵字即套用目標科目；由上往下比對、<b>先命中先贏</b>（用 ↑↓ 調整順序）。
+        這裡的自訂規則<b>優先於內建規則</b>（內建清單見下方）。可限定只在收款或付款方向適用；
+        勾「仍標待確認」則命中入帳後仍提醒人工複核。目標科目若之後被刪除，該條規則自動失效（該列落待確認，不會記錯）。
+      </div>
+
+      {/* 新增 / 編輯 表單 */}
+      <div className="bg-white rounded-xl border border-gray-200 p-3 flex flex-wrap items-end gap-2">
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-xs text-gray-500 mb-1">關鍵字（摘要包含即命中）</label>
+          <input value={draft.match} onChange={(e) => setDraft({ ...draft, match: e.target.value })} className={inp} placeholder="例：跨行費用" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">方向</label>
+          <select value={draft.direction} onChange={(e) => setDraft({ ...draft, direction: e.target.value as 'any' | 'in' | 'out' })} className={inp}>
+            <option value="any">不限</option><option value="in">收款</option><option value="out">付款</option>
+          </select>
+        </div>
+        <div className="min-w-[180px]">
+          <label className="block text-xs text-gray-500 mb-1">目標科目</label>
+          <select value={draft.account} onChange={(e) => setDraft({ ...draft, account: e.target.value })} className={inp}>
+            <option value="">— 選擇科目 —</option>
+            {targets.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+          </select>
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 pb-2.5">
+          <input type="checkbox" checked={draft.review} onChange={(e) => setDraft({ ...draft, review: e.target.checked })} className="w-4 h-4 accent-brand" />
+          仍標待確認
+        </label>
+        <button onClick={save} className="px-4 py-2 rounded-lg bg-brand text-white text-sm font-medium hover:bg-brand-dark">
+          {editingId ? '儲存修改' : '+ 新增規則'}
+        </button>
+        {editingId && (
+          <button onClick={() => { setEditingId(null); setDraft(empty) }} className="px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">取消</button>
+        )}
+      </div>
+
+      {/* 自訂規則清單 */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead><tr className="bg-gray-50 text-gray-500 text-xs">
+            <th className="px-3 py-2 w-20 text-left">順序</th><th className="px-3 py-2 text-left">關鍵字</th>
+            <th className="px-3 py-2 text-left">方向</th><th className="px-3 py-2 text-left">目標科目</th>
+            <th className="px-3 py-2 text-center">待確認</th><th className="px-3 py-2 text-center w-24">操作</th>
+          </tr></thead>
+          <tbody>
+            {importKwRules.length === 0 && <tr><td colSpan={6} className="px-3 py-5 text-center text-gray-400">尚無自訂規則。新增後立即套用於下次匯入預覽。</td></tr>}
+            {importKwRules.map((r, i) => {
+              const missing = !accounts.some((a) => a.code === r.account)
+              return (
+                <tr key={r.id} className={`border-t border-gray-100 ${editingId === r.id ? 'bg-brand-soft/60' : ''}`}>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <button onClick={() => moveImportKwRule(r.id, -1)} disabled={i === 0} className="text-gray-400 hover:text-brand disabled:opacity-20" title="往上移（較優先）">↑</button>
+                    <button onClick={() => moveImportKwRule(r.id, 1)} disabled={i === importKwRules.length - 1} className="text-gray-400 hover:text-brand disabled:opacity-20 ml-1" title="往下移">↓</button>
+                  </td>
+                  <td className="px-3 py-2 text-gray-800">{r.match}</td>
+                  <td className="px-3 py-2 text-gray-500">{dirZh[r.direction]}</td>
+                  <td className="px-3 py-2 text-gray-700">
+                    {r.account} {nameOf(r.account) ?? ''}
+                    {missing && <span className="ml-1 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5">⚠ 科目不存在，規則失效</span>}
+                  </td>
+                  <td className="px-3 py-2 text-center">{r.review ? '✓' : ''}</td>
+                  <td className="px-3 py-2 text-center whitespace-nowrap">
+                    <button onClick={() => { setEditingId(r.id); setDraft({ match: r.match, account: r.account, direction: r.direction, review: !!r.review }) }}
+                      className="text-gray-400 hover:text-brand mr-2" title="編輯">✎</button>
+                    <button onClick={() => { if (confirm(`刪除規則「${r.match} → ${r.account}」？`)) deleteImportKwRule(r.id) }}
+                      className="text-gray-300 hover:text-red-500" title="刪除">✕</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 內建規則（唯讀參考） */}
+      <details className="bg-white rounded-xl border border-gray-200 p-3 text-sm">
+        <summary className="cursor-pointer text-gray-600">內建規則（{KEYWORD_RULES.length} 條，唯讀；自訂規則都沒命中時才輪到這裡）</summary>
+        <div className="overflow-x-auto mt-2 max-h-80 overflow-y-auto">
+          <table className="w-full min-w-[560px] text-xs">
+            <thead><tr className="bg-gray-50 text-gray-500 sticky top-0">
+              <th className="px-2 py-1.5 text-left">關鍵字</th><th className="px-2 py-1.5 text-left">方向</th>
+              <th className="px-2 py-1.5 text-left">目標</th><th className="px-2 py-1.5 text-center">待確認</th>
+            </tr></thead>
+            <tbody>
+              {KEYWORD_RULES.map((r, i) => (
+                <tr key={i} className="border-t border-gray-100">
+                  <td className="px-2 py-1 text-gray-700">{r.match}</td>
+                  <td className="px-2 py-1 text-gray-500">{r.direction ? dirZh[r.direction] : '不限'}</td>
+                  <td className="px-2 py-1 text-gray-600">{r.account} {nameOf(r.account) ?? ''}</td>
+                  <td className="px-2 py-1 text-center">{r.review ? '✓' : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[11px] text-gray-400 mt-1.5">內建規則要修改或停用請告知系統維護者（寫在程式裡、有版本控管與測試保護）。要覆蓋某條內建規則，直接新增一條同關鍵字的自訂規則即可（自訂優先）。</p>
+      </details>
     </div>
   )
 }

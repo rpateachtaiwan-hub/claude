@@ -12,7 +12,7 @@
 import { buildEntry } from './engine'
 import { UNIFIED_PRESET_ACCOUNTS, unclassifiedCode } from './accounts'
 import { AI_CONFIDENCE_THRESHOLD, type AiMeta } from './aiClassify'
-import type { Account, JournalEntry } from './types'
+import type { Account, ImportKwRule, JournalEntry } from './types'
 
 /** 名稱正規化（去空白/符號），科目名稱比對用。 */
 export function normAccountName(s: string): string {
@@ -157,14 +157,29 @@ export function isOpeningBalanceRow(desc: string): boolean {
   return /餘額/.test(String(desc))
 }
 
-/** 以內容關鍵字配科目；目標科目「先認名稱、再認編號」（使用者改過編號也能跟上）。未命中回 null。 */
+/**
+ * 以內容關鍵字配科目；未命中回 null。
+ * 使用者自訂規則（userRules，依 order 排序）優先於內建 KEYWORD_RULES，皆為先命中先贏。
+ * 自訂規則的目標科目以使用者科目表為準，不存在則該條自動失效（落到後續判斷，不會記錯位置）。
+ * 內建規則目標「先認名稱、再認編號」（使用者改過編號也能跟上）。
+ */
 export function matchByDescription(
   desc: string,
   accounts: Account[],
   direction?: 'in' | 'out',
+  userRules?: ImportKwRule[],
 ): { account: string; review: boolean } | null {
   const codes = new Set(accounts.map((a) => a.code))
   const nameIndex = new Map(accounts.map((a) => [normAccountName(a.name), a.code]))
+  if (userRules?.length) {
+    for (const r of [...userRules].sort((a, b) => a.order - b.order)) {
+      if (!r.match) continue
+      if (r.direction !== 'any' && direction && r.direction !== direction) continue
+      if (!desc.includes(r.match)) continue
+      if (!codes.has(r.account)) continue
+      return { account: r.account, review: !!r.review }
+    }
+  }
   for (const r of KEYWORD_RULES) {
     if (r.direction && direction && r.direction !== direction) continue
     if (!desc.includes(r.match)) continue
@@ -260,6 +275,8 @@ export interface ClassifyOpts {
   catOverride?: Record<string, string>
   /** 類別文字子字串配對的最終 fallback（沿用既有 matchCategory 傳入結果） */
   matchCategory?: (catText: string, accounts: Account[]) => string | null
+  /** 使用者自訂匯入關鍵字規則（優先於內建規則） */
+  userRules?: ImportKwRule[]
 }
 
 export interface Classified {
@@ -291,7 +308,7 @@ export function classifyRow(row: RowInput, accounts: Account[], opts: ClassifyOp
     if (exact) { account = exact.code; source = 'category' }
   }
   if (!account) {
-    const kw = matchByDescription(row.description, accounts, row.direction)
+    const kw = matchByDescription(row.description, accounts, row.direction, opts.userRules)
     if (kw) { account = kw.account; review = kw.review; source = 'keyword' }
   }
   if (!account && cat.length >= 2) {

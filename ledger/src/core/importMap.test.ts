@@ -31,6 +31,20 @@ describe('關鍵字配科目', () => {
   it('周轉金 → 股東往來-旅行社(2301)', () => {
     expect(matchByDescription('旅行社－借入周轉金', accounts)?.account).toBe('2301')
   })
+  it('使用者自訂規則：優先於內建、依順序先命中先贏、限方向、目標不存在自動失效', () => {
+    const ur = (id: string, match: string, account: string, direction: 'any' | 'in' | 'out' = 'any', order = 1, review = false) =>
+      ({ id, kind: 'import_kw' as const, match, account, direction, review, order })
+    // 優先於內建：摘要含「手續費」本會命中內建 6105，自訂規則指到 609 蓋過它
+    expect(matchByDescription('跨行手續費', accounts, 'out', [ur('a', '手續費', '609')])?.account).toBe('609')
+    // 順序：order 小者先比對
+    expect(matchByDescription('AABB', accounts, 'out', [ur('b', 'BB', '610', 'any', 2), ur('c', 'AA', '611', 'any', 1)])?.account).toBe('611')
+    // 限方向：規則限付款，收款列不適用（且無內建可退 → null）
+    expect(matchByDescription('特殊摘要X', accounts, 'in', [ur('d', '特殊摘要X', '609', 'out')])).toBeNull()
+    // 目標科目不存在 → 該條失效，退回內建（手續費 → 6105）
+    expect(matchByDescription('跨行手續費', accounts, 'out', [ur('e', '手續費', '9999')])?.account).toBe('6105')
+    // review 旗標帶出
+    expect(matchByDescription('特殊摘要Y', accounts, 'out', [ur('f', '特殊摘要Y', '609', 'any', 1, true)])?.review).toBe(true)
+  })
   it('跨行費用 → 使用者自訂 614 手續費（先於通用「手續費」規則）', () => {
     expect(matchByDescription('跨行費用', accounts)?.account).toBe('614')
     expect(matchByDescription('ATM跨行費用 15', accounts)?.account).toBe('614')

@@ -14,7 +14,7 @@ import { dailyBalanceId, type DailyBalance } from '../core/dailyBalance'
 import type { AiUsage } from '../core/aiClassify'
 import { buildEntry, newId } from '../core/engine'
 import type { AiConfig } from '../core/ai'
-import type { Account, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
+import type { Account, ImportKwRule, JournalEntry, QuickInput, Rule, Suggestion } from '../core/types'
 
 const LS_KEY = 'qing-ledger-v1'
 const LS_AI = 'qing-ledger-ai'
@@ -57,6 +57,13 @@ interface LedgerState extends PersistShape {
   deleteReconPoint: (id: string) => Promise<void>
   /** 每日銀行餘額（唯讀；由機器人經 bank-balance API 寫入 rules 表） */
   dailyBalances: DailyBalance[]
+  /** 匯入關鍵字規則（使用者自訂，優先於內建；雲端存 rules 表、本機存獨立 key） */
+  importKwRules: ImportKwRule[]
+  addImportKwRule: (r: Omit<ImportKwRule, 'id' | 'kind' | 'order' | 'createdAt'>) => Promise<void>
+  updateImportKwRule: (id: string, patch: Partial<Omit<ImportKwRule, 'id' | 'kind'>>) => Promise<void>
+  deleteImportKwRule: (id: string) => Promise<void>
+  /** 把規則往上(-1)/往下(+1)移一位（先命中先贏，順序有意義） */
+  moveImportKwRule: (id: string, delta: -1 | 1) => Promise<void>
 
   init: () => Promise<void>
   /** 離線/無金鑰時的預設建議（不含學習規則） */
@@ -117,6 +124,7 @@ function withPlaceholders(accs: Account[]): Account[] {
 }
 
 const LS_RECON = 'qing-ledger-recon'
+const LS_IMPORTKW = 'qing-ledger-importkw'
 const LS_AIUSAGE = 'qing-ledger-aiusage'
 const AI_USAGE_DOC_ID = 'AI-USAGE'
 function loadReconLocal(): ReconPoint[] {
@@ -130,6 +138,19 @@ function loadReconLocal(): ReconPoint[] {
 function saveReconLocal(pts: ReconPoint[]) {
   localStorage.setItem(LS_RECON, JSON.stringify(pts))
 }
+
+function loadImportKwLocal(): ImportKwRule[] {
+  try {
+    const raw = localStorage.getItem(LS_IMPORTKW)
+    return raw ? (JSON.parse(raw) as ImportKwRule[]) : []
+  } catch {
+    return []
+  }
+}
+function saveImportKwLocal(rules: ImportKwRule[]) {
+  localStorage.setItem(LS_IMPORTKW, JSON.stringify(rules))
+}
+const sortKw = (rules: ImportKwRule[]) => [...rules].sort((a, b) => a.order - b.order)
 
 const LS_DAILY = 'qing-ledger-dailybal'
 function loadDailyLocal(): DailyBalance[] {
@@ -241,6 +262,7 @@ export const useLedger = create<LedgerState>()((set, get) => {
   rules: [],
   reconPoints: [],
   dailyBalances: [],
+  importKwRules: [],
   entries: [],
   companies: [],
 
@@ -297,6 +319,49 @@ export const useLedger = create<LedgerState>()((set, get) => {
     else saveReconLocal(reconPoints)
   },
 
+  addImportKwRule: async (r) => {
+    const cur = get().importKwRules
+    const rule: ImportKwRule = {
+      ...r, id: newId('KW'), kind: 'import_kw',
+      order: (cur.length ? Math.max(...cur.map((x) => x.order)) : 0) + 1,
+      createdAt: new Date().toISOString(),
+    }
+    const importKwRules = sortKw([...cur, rule])
+    set({ importKwRules })
+    if (get().usingSupabase) await supabase.from('rules').insert({ id: rule.id, data: rule })
+    else saveImportKwLocal(importKwRules)
+  },
+
+  updateImportKwRule: async (id, patch) => {
+    const cur = get().importKwRules.find((x) => x.id === id)
+    if (!cur) return
+    const next: ImportKwRule = { ...cur, ...patch, id: cur.id, kind: 'import_kw' }
+    const importKwRules = sortKw(get().importKwRules.map((x) => (x.id === id ? next : x)))
+    set({ importKwRules })
+    if (get().usingSupabase) await supabase.from('rules').upsert({ id, data: next })
+    else saveImportKwLocal(importKwRules)
+  },
+
+  deleteImportKwRule: async (id) => {
+    const importKwRules = get().importKwRules.filter((x) => x.id !== id)
+    set({ importKwRules })
+    if (get().usingSupabase) await supabase.from('rules').delete().eq('id', id)
+    else saveImportKwLocal(importKwRules)
+  },
+
+  moveImportKwRule: async (id, delta) => {
+    const list = sortKw(get().importKwRules)
+    const i = list.findIndex((x) => x.id === id)
+    const j = i + delta
+    if (i < 0 || j < 0 || j >= list.length) return
+    const a = { ...list[i], order: list[j].order }
+    const b = { ...list[j], order: list[i].order }
+    const importKwRules = sortKw(list.map((x) => (x.id === a.id ? a : x.id === b.id ? b : x)))
+    set({ importKwRules })
+    if (get().usingSupabase) await supabase.from('rules').upsert([{ id: a.id, data: a }, { id: b.id, data: b }])
+    else saveImportKwLocal(importKwRules)
+  },
+
   init: async () => {
     if (hasSupabase) {
       try {
@@ -313,15 +378,16 @@ export const useLedger = create<LedgerState>()((set, get) => {
         if (!accRes.error && accRes.data) {
           const accounts = withPlaceholders(accRes.data.length ? accRes.data.map((r) => r.data as Account) : DEFAULT_ACCOUNTS)
           // rules 表為通用 jsonb 儲存：kind==='recon' 為對帳點、kind==='daily_bal' 為每日餘額、kind==='ai_usage' 為用量累計，無 kind 者為規則
-          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint | DailyBalance | Record<string, unknown>)
+          const ruleRows = (ruleRes.data ?? []).map((r) => r.data as Rule | ReconPoint | DailyBalance | ImportKwRule | Record<string, unknown>)
           const kindOf = (r: unknown) => (r as { kind?: string }).kind
           const rules = ruleRows.filter((r): r is Rule => kindOf(r) === undefined)
           const reconPoints = ruleRows.filter((r): r is ReconPoint => kindOf(r) === 'recon')
           const dailyBalances = ruleRows.filter((r): r is DailyBalance => kindOf(r) === 'daily_bal')
+          const importKwRules = sortKw(ruleRows.filter((r): r is ImportKwRule => kindOf(r) === 'import_kw'))
           const usageRow = ruleRows.find((r) => kindOf(r) === 'ai_usage') as (AiUsage & { updatedAt: string }) | undefined
           const entries = (entRes.data ?? []).map((r) => r.data as JournalEntry)
           const companies = (!coRes.error && coRes.data) ? coRes.data.map((r) => r.name as string) : []
-          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, dailyBalances, entries, companies, aiUsage: usageRow ?? null })
+          set({ ready: true, usingSupabase: true, aiConfig: loadAi(), accounts, rules, reconPoints, dailyBalances, importKwRules, entries, companies, aiUsage: usageRow ?? null })
           // 舊資料若無流水號，自動補編（一次性）
           if (entries.some((e) => typeof e.seq !== 'number')) await get().backfillSeq()
           return
@@ -339,6 +405,7 @@ export const useLedger = create<LedgerState>()((set, get) => {
       rules: local?.rules ?? [],
       reconPoints: loadReconLocal(),
       dailyBalances: loadDailyLocal(),
+      importKwRules: sortKw(loadImportKwLocal()),
       aiUsage: (() => { try { const r = localStorage.getItem(LS_AIUSAGE); return r ? JSON.parse(r) : null } catch { return null } })(),
       entries: local?.entries ?? [],
       companies: local?.companies ?? [],

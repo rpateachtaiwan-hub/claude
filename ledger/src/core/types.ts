@@ -80,6 +80,23 @@ export interface QuickInput {
   accrual?: boolean
 }
 
+/** 匯入關鍵字規則（使用者自訂；優先於程式內建規則；雲端存 rules 表 kind='import_kw'） */
+export interface ImportKwRule {
+  id: string
+  kind: 'import_kw'
+  /** 摘要包含此文字即命中（子字串比對） */
+  match: string
+  /** 目標科目 code（以使用者科目表為準；科目不存在時規則自動失效） */
+  account: string
+  /** 適用方向；'any' 不分收支 */
+  direction: 'in' | 'out' | 'any'
+  /** 命中後仍標待確認（先入帳、提醒人工複核） */
+  review?: boolean
+  /** 排序（小者先比對；先命中先贏） */
+  order: number
+  createdAt?: string
+}
+
 /** 學習規則：關鍵字/對象 → 建議科目 */
 export interface Rule {
   id: string
